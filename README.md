@@ -249,6 +249,3 @@ No C dependencies. No modifications to upstream crates.
 
 This module is a Rust rewrite of the C-based [redis-roaring](https://github.com/aviggiano/redis-roaring) module. It adds the long-requested binary export/import commands ([#141](https://github.com/aviggiano/redis-roaring/issues/141), [#97](https://github.com/aviggiano/redis-roaring/pull/97)) and eliminates the memory safety risks inherent to C module extensions.
 
-## License
-
-MIT
