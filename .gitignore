@@ -1,0 +1,39 @@
+# Build artifacts
+/target/
+**/*.rs.bk
+
+# Secrets & credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+credentials.*
+secrets.*
+
+# AI / LLM
+CLAUDE.md
+.claude/
+.cursorrules
+.cursor/
+.copilot/
+copilot-instructions.md
+.github/copilot-instructions.md
+.aider*
+.continue/
+.codeium/
+.windsurf/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
