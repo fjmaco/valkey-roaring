@@ -1,8 +1,8 @@
 # valkey-roaring
 
-[![CI](https://github.com/YOUR_GITHUB_USERNAME/valkey-roaring/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/valkey-roaring/actions/workflows/ci.yml)
-[![Fuzz](https://github.com/YOUR_GITHUB_USERNAME/valkey-roaring/actions/workflows/fuzz.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/valkey-roaring/actions/workflows/fuzz.yml)
-[![codecov](https://codecov.io/gh/YOUR_GITHUB_USERNAME/valkey-roaring/graph/badge.svg)](https://codecov.io/gh/YOUR_GITHUB_USERNAME/valkey-roaring)
+[![CI](https://github.com/fjmaco/valkey-roaring/actions/workflows/ci.yml/badge.svg)](https://github.com/fjmaco/valkey-roaring/actions/workflows/ci.yml)
+[![Fuzz](https://github.com/fjmaco/valkey-roaring/actions/workflows/fuzz.yml/badge.svg)](https://github.com/fjmaco/valkey-roaring/actions/workflows/fuzz.yml)
+[![codecov](https://codecov.io/gh/fjmaco/valkey-roaring/graph/badge.svg)](https://codecov.io/gh/fjmaco/valkey-roaring)
 [![Docker](https://img.shields.io/docker/v/YOUR_DOCKERHUB_USERNAME/valkey-roaring?label=docker)](https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/valkey-roaring)
 
 Roaring Bitmaps for [Valkey](https://valkey.io/).

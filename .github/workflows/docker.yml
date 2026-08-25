@@ -1,8 +1,8 @@
 name: Docker
 
 # Publishes the module image to Docker Hub: `latest` from main, semver tags
-# from v* releases. Requires the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN
-# repository secrets.
+# from v* releases. Skips cleanly until the DOCKERHUB_USERNAME and
+# DOCKERHUB_TOKEN repository secrets are configured.
 on:
   push:
     branches: [main]
@@ -13,18 +13,33 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - name: Check Docker Hub credentials
+        id: creds
+        run: |
+          if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub secrets not configured — skipping publish." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.creds.outputs.ok == 'true'
 
       - uses: docker/setup-qemu-action@v3
+        if: steps.creds.outputs.ok == 'true'
 
       - uses: docker/setup-buildx-action@v3
+        if: steps.creds.outputs.ok == 'true'
 
       - uses: docker/login-action@v3
+        if: steps.creds.outputs.ok == 'true'
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - uses: docker/metadata-action@v5
+        if: steps.creds.outputs.ok == 'true'
         id: meta
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/valkey-roaring
@@ -33,6 +48,7 @@ jobs:
             type=semver,pattern={{version}}
 
       - uses: docker/build-push-action@v6
+        if: steps.creds.outputs.ok == 'true'
         with:
           context: .
           # Add linux/arm64 here for a multi-arch image; the Rust build under
