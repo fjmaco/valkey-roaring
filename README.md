@@ -314,6 +314,10 @@ cargo test
 - Serialization round-trips, plus 800+ corrupted/truncated/garbage inputs fed
   through the `R.IMPORT` deserialization path asserting it never panics
 
+The coverage badge reports the unit/property layer only; the command
+handlers it cannot instrument are exercised by the integration suite below
+(see `codecov.yml` for the scoping rationale).
+
 **Integration suite** — 283 assertions against a live Valkey instance:
 
 ```bash
