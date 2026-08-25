@@ -88,9 +88,23 @@ jobs:
       - name: Coverage report
         run: cargo llvm-cov --release --locked --lcov --output-path lcov.info
 
+      - name: Coverage summary
+        run: |
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cargo llvm-cov report --release >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
           path: lcov.info
-      # To publish to Codecov/Coveralls, add the upload action with the repo token here.
+
+      # No-op until the CODECOV_TOKEN repository secret is added (free for
+      # public repos at codecov.io); never fails the build.
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

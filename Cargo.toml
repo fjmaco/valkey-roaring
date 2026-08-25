@@ -15,3 +15,7 @@ roaring = "0.11.5"
 # Test builds only: let ValkeyAlloc fall back to the system allocator so
 # `cargo test` can run without a live Valkey. Production builds are unaffected.
 valkey-module = { version = "0.1", features = ["enable-system-alloc"] }
+
+[features]
+# Exposes internal algorithm entry points for the fuzz targets in fuzz/.
+fuzzing = []

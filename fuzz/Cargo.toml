@@ -1,0 +1,37 @@
+[package]
+name = "valkey-roaring-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+roaring = "0.11.5"
+valkey-roaring = { path = "..", features = ["fuzzing"] }
+# The fuzz binaries run without a live server: this feature makes the module's
+# global allocator fall back to the system allocator (same trick as the tests).
+valkey-module = { version = "0.1", features = ["enable-system-alloc"] }
+
+[[bin]]
+name = "import_bytes"
+path = "fuzz_targets/import_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parity_ops"
+path = "fuzz_targets/parity_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bitop_kernels"
+path = "fuzz_targets/bitop_kernels.rs"
+test = false
+doc = false
+bench = false

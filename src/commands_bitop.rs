@@ -18,7 +18,7 @@ use valkey_module::native_types::ValkeyType;
 use valkey_module::{Context, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
 
 /// Operations that take a destination plus one or more source keys.
-fn is_variadic_op(op: &str) -> bool {
+pub fn is_variadic_op(op: &str) -> bool {
     matches!(
         op,
         "AND" | "OR" | "XOR" | "ANDOR" | "DIFF" | "DIFF1" | "ONE"
@@ -147,7 +147,7 @@ fn handle_bitop_not<T: RoaringType>(
 }
 
 /// AND: intersection of all sources.
-fn op_and<T: RoaringType>(sources: Vec<T>) -> T {
+pub fn op_and<T: RoaringType>(sources: Vec<T>) -> T {
     if sources.is_empty() {
         return T::new();
     }
@@ -159,7 +159,7 @@ fn op_and<T: RoaringType>(sources: Vec<T>) -> T {
 }
 
 /// OR: union of all sources.
-fn op_or<T: RoaringType>(sources: Vec<T>) -> T {
+pub fn op_or<T: RoaringType>(sources: Vec<T>) -> T {
     if sources.is_empty() {
         return T::new();
     }
@@ -171,7 +171,7 @@ fn op_or<T: RoaringType>(sources: Vec<T>) -> T {
 }
 
 /// XOR: symmetric difference of all sources.
-fn op_xor<T: RoaringType>(sources: Vec<T>) -> T {
+pub fn op_xor<T: RoaringType>(sources: Vec<T>) -> T {
     if sources.is_empty() {
         return T::new();
     }
@@ -183,7 +183,7 @@ fn op_xor<T: RoaringType>(sources: Vec<T>) -> T {
 }
 
 /// ANDOR: (src[1] | src[2] | ...) & src[0]
-fn op_andor<T: RoaringType>(sources: Vec<T>) -> T {
+pub fn op_andor<T: RoaringType>(sources: Vec<T>) -> T {
     if sources.len() < 2 {
         return T::new();
     }
@@ -198,7 +198,7 @@ fn op_andor<T: RoaringType>(sources: Vec<T>) -> T {
 }
 
 /// ANDNOT / DIFF: src[0] - src[1] - src[2] - ...
-fn op_andnot<T: RoaringType>(sources: Vec<T>) -> T {
+pub fn op_andnot<T: RoaringType>(sources: Vec<T>) -> T {
     if sources.is_empty() {
         return T::new();
     }
@@ -210,7 +210,7 @@ fn op_andnot<T: RoaringType>(sources: Vec<T>) -> T {
 }
 
 /// ORNOT / DIFF1: (src[1] | src[2] | ...) - src[0]
-fn op_ornot<T: RoaringType>(sources: Vec<T>) -> T {
+pub fn op_ornot<T: RoaringType>(sources: Vec<T>) -> T {
     if sources.len() < 2 {
         return T::new();
     }
@@ -224,7 +224,7 @@ fn op_ornot<T: RoaringType>(sources: Vec<T>) -> T {
 
 /// ONE: bits present in exactly one source.
 /// Algorithm: XOR accumulator + intersection tracker to remove duplicates.
-fn op_one<T: RoaringType>(sources: Vec<T>) -> T {
+pub fn op_one<T: RoaringType>(sources: Vec<T>) -> T {
     if sources.is_empty() {
         return T::new();
     }

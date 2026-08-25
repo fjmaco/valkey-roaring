@@ -1,5 +1,10 @@
 # valkey-roaring
 
+[![CI](https://github.com/YOUR_GITHUB_USERNAME/valkey-roaring/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/valkey-roaring/actions/workflows/ci.yml)
+[![Fuzz](https://github.com/YOUR_GITHUB_USERNAME/valkey-roaring/actions/workflows/fuzz.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/valkey-roaring/actions/workflows/fuzz.yml)
+[![codecov](https://codecov.io/gh/YOUR_GITHUB_USERNAME/valkey-roaring/graph/badge.svg)](https://codecov.io/gh/YOUR_GITHUB_USERNAME/valkey-roaring)
+[![Docker](https://img.shields.io/docker/v/YOUR_DOCKERHUB_USERNAME/valkey-roaring?label=docker)](https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/valkey-roaring)
+
 Roaring Bitmaps for [Valkey](https://valkey.io/).
 
 [Roaring Bitmaps](https://roaringbitmap.org/) are compressed bitmap data structures that outperform plain bitmaps on both memory and speed for sparse or clustered integer sets. This module adds them to Valkey as native types, exposed through **51 commands** across 32-bit (`R.*`) and 64-bit (`R64.*`) variants — including binary export/import in the [CRoaring portable format](https://github.com/RoaringBitmap/CRoaring), so bitmaps can move between Valkey and any service that speaks the format (Java, Go, Python, C++, Rust) without intermediate integer arrays.
@@ -30,7 +35,16 @@ Dependencies: [roaring](https://crates.io/crates/roaring) 0.11.5 and [valkey-mod
 
 ## Getting Started
 
-### Docker (recommended)
+### Docker Hub
+
+```bash
+docker run -d -p 6379:6379 YOUR_DOCKERHUB_USERNAME/valkey-roaring
+```
+
+Images are published automatically: `latest` from `main`, version tags from
+`v*` releases.
+
+### Docker Compose (build from source)
 
 ```bash
 docker compose up -d
@@ -316,6 +330,16 @@ bash tests/integration.sh
 - Systematic error coverage: wrong-arity for all 51 commands, WRONGTYPE for
   every key command against a mistyped key, semantic errors (missing keys,
   bad binary, out-of-range values)
+
+**Fuzzing** — three [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz)
+targets run 60s each on every push/PR and 10 minutes nightly, with a
+persistent corpus cached between runs:
+
+```bash
+cargo +nightly fuzz run import_bytes    # untrusted bytes into the R.IMPORT path
+cargo +nightly fuzz run parity_ops      # 32-bit vs 64-bit behavioral parity
+cargo +nightly fuzz run bitop_kernels   # BITOP kernels vs a naive reference
+```
 
 **Performance benchmark** — see [Performance](#performance); CI runs a smoke
 subset on every push.

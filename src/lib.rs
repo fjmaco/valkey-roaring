@@ -25,6 +25,13 @@ mod test_util;
 
 use bitmap_type::RoaringType;
 
+/// Internal surface exposed only for the fuzz targets in `fuzz/`.
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing {
+    pub use crate::bitmap_type::RoaringType;
+    pub use crate::commands_bitop::{op_and, op_andnot, op_andor, op_one, op_or, op_ornot, op_xor};
+}
+
 const ENCODING_VERSION: i32 = 1;
 
 // ============================================================
