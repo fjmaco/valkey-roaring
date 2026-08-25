@@ -15,7 +15,12 @@ jobs:
   benchmark:
     runs-on: ubuntu-latest
     steps:
+      # With BENCHMARK_PUSH_TOKEN set (a fine-grained PAT with Contents write,
+      # owned by a repo admin), the push bypasses branch protection; with the
+      # default token the commit step below falls back to an artifact.
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BENCHMARK_PUSH_TOKEN || github.token }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -50,4 +55,15 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add README.md
           git commit -m "Update performance benchmarks [skip ci]"
-          git push
+          if ! git push; then
+            echo "Push blocked by branch protection — README uploaded as artifact instead." >> "$GITHUB_STEP_SUMMARY"
+            echo "blocked=true" >> "$GITHUB_ENV"
+          fi
+
+      - name: Upload README as artifact when push is blocked
+        if: env.blocked == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-readme
+          path: README.md
+          retention-days: 30
