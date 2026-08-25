@@ -15,7 +15,7 @@ family once. `R.STAT` is shared and auto-detects the key's width.
 | Ranges | [SETRANGE](/commands/setrange), [SETFULL](/commands/setfull) |
 | Aggregation | [BITCOUNT](/commands/bitcount), [BITPOS](/commands/bitpos), [MIN](/commands/min), [MAX](/commands/max) |
 | Set algebra | [BITOP](/commands/bitop), [CONTAINS](/commands/contains), [JACCARD](/commands/jaccard), [DIFF](/commands/diff) |
-| Interchange | [EXPORT](/commands/export), [IMPORT](/commands/import) |
+| Interchange | [EXPORT](/commands/export), [IMPORT](/commands/import) — **valkey-roaring originals**, not present in redis-roaring |
 | Maintenance | [OPTIMIZE](/commands/optimize), [STAT](/commands/stat) |
 
 Replies for 64-bit values above 2⁶³−1 arrive as decimal strings (RESP
