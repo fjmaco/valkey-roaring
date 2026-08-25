@@ -5,7 +5,7 @@
 [![codecov](https://codecov.io/gh/fjmaco/valkey-roaring/graph/badge.svg)](https://codecov.io/gh/fjmaco/valkey-roaring)
 [![Docker Pulls](https://img.shields.io/docker/pulls/fjmaco/valkey-roaring?label=docker%20pulls)](https://hub.docker.com/r/fjmaco/valkey-roaring)
 
-Roaring Bitmaps for [Valkey](https://valkey.io/).
+Roaring Bitmaps for [Valkey](https://valkey.io/). **[Documentation →](https://fjmaco.github.io/valkey-roaring/)**
 
 [Roaring Bitmaps](https://roaringbitmap.org/) are compressed bitmap data structures that outperform plain bitmaps on both memory and speed for sparse or clustered integer sets. This module adds them to Valkey as native types, exposed through **51 commands** across 32-bit (`R.*`) and 64-bit (`R64.*`) variants — including binary export/import in the [CRoaring portable format](https://github.com/RoaringBitmap/CRoaring), so bitmaps can move between Valkey and any service that speaks the format (Java, Go, Python, C++, Rust) without intermediate integer arrays.
 
@@ -362,6 +362,7 @@ bash tests/performance.sh                    # full run, updates this table
 PERF_MAX_FILES=5 bash tests/performance.sh   # quick smoke run
 ```
 
+<!-- #region performance-table -->
 <!-- BEGIN_PERFORMANCE -->
 |               OP |     TIME/OP (us) |     ST.DEV. (us) |
 | ---------------- | ---------------- | ---------------- |
@@ -402,6 +403,7 @@ PERF_MAX_FILES=5 bash tests/performance.sh   # quick smoke run
 |          R64.MAX |            28.12 |             1.04 |
 |              MAX |            30.25 |             7.36 |
 <!-- END_PERFORMANCE -->
+<!-- #endregion performance-table -->
 
 Notes: native `MIN`/`MAX` don't exist and `BITOP ANDOR`/`BITOP ONE` are not
 supported by Valkey 8.1, so those native rows measure error-reply round-trips.
