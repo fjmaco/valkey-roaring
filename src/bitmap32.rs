@@ -174,7 +174,6 @@ impl RoaringType for RoaringBitmap {
         Box::new(self.iter())
     }
 
-
     fn from_bit_array(bits: &[u8]) -> Self {
         let mut bm = RoaringBitmap::new();
         for (i, &b) in bits.iter().enumerate() {

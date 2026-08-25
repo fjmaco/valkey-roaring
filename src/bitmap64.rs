@@ -199,7 +199,6 @@ impl RoaringType for RoaringTreemap {
         Box::new(self.iter())
     }
 
-
     fn from_bit_array(bits: &[u8]) -> Self {
         let mut bm = RoaringTreemap::new();
         for (i, &b) in bits.iter().enumerate() {
@@ -360,7 +359,6 @@ mod tests {
         assert_eq!(RoaringType::len(&b), 100_001);
         assert!(b.contains(0) && b.contains(100_000));
     }
-
 
     #[test]
     fn remove_many_counted_duplicates() {
