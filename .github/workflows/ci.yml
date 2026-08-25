@@ -103,7 +103,7 @@ jobs:
       # No-op until the CODECOV_TOKEN repository secret is added (free for
       # public repos at codecov.io); never fails the build.
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
