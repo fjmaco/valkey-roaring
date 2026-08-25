@@ -34,6 +34,16 @@ Or in `valkey.conf`:
 loadmodule /path/to/libvalkey_roaring.so
 ```
 
+## Using Redis instead of Valkey
+
+The module initializes through the RedisModule API, which both servers expose,
+so the same `.so` loads into Redis 7.4+ unchanged — commands, replication, and
+RDB persistence all work identically:
+
+```bash
+redis-server --loadmodule ./target/release/libvalkey_roaring.so
+```
+
 ## First commands
 
 ```bash
