@@ -1,40 +1,32 @@
 # valkey-roaring
 
-Roaring Bitmaps for [Valkey](https://valkey.io/)
+Roaring Bitmaps for [Valkey](https://valkey.io/).
 
-## Intro
+[Roaring Bitmaps](https://roaringbitmap.org/) are compressed bitmap data structures that outperform plain bitmaps on both memory and speed for sparse or clustered integer sets. This module adds them to Valkey as native types, exposed through **51 commands** across 32-bit (`R.*`) and 64-bit (`R64.*`) variants — including binary export/import in the [CRoaring portable format](https://github.com/RoaringBitmap/CRoaring), so bitmaps can move between Valkey and any service that speaks the format (Java, Go, Python, C++, Rust) without intermediate integer arrays.
 
-This project uses the [roaring-rs](https://github.com/RoaringBitmap/roaring-rs) library to implement roaring bitmap commands for [Valkey](https://valkey.io/). Built in Rust with the official [valkey-module-rs](https://github.com/valkey-io/valkeymodule-rs) SDK. Zero C dependencies.
+Built in Rust on the official [valkey-module](https://crates.io/crates/valkey-module) SDK and the [roaring](https://crates.io/crates/roaring) crate.
 
-Roaring Bitmaps are compressed data structures that outperform traditional bitmaps on both memory and speed for sparse or clustered integer sets. This module exposes them through **51 commands** across 32-bit (`R.*`) and 64-bit (`R64.*`) variants, including binary export/import in the [CRoaring portable format](https://github.com/RoaringBitmap/CRoaring) for efficient cross-service communication.
+## Features
 
-This is a Rust rewrite of the C-based [redis-roaring](https://github.com/aviggiano/redis-roaring) module. It adds binary export/import commands ([redis-roaring#141](https://github.com/aviggiano/redis-roaring/issues/141), [redis-roaring#97](https://github.com/aviggiano/redis-roaring/pull/97)) and eliminates the memory safety risks inherent to C module extensions.
+- **Two value ranges** — 32-bit (`R.*`, values 0 to 2³²−1) and 64-bit (`R64.*`, values 0 to 2⁶⁴−1) bitmap types with identical command semantics
+- **Binary export/import** — `R.EXPORT` / `R.IMPORT` serialize to the CRoaring portable format for efficient cross-service transfer
+- **8 bitwise operations** — AND, OR, XOR, NOT, ANDOR, DIFF, DIFF1, ONE, cluster-aware key reporting included
+- **RDB persistence** — bitmaps survive `BGSAVE` and server restarts
+- **Container statistics** — `R.STAT` reports cardinality, min/max, and the full array/bitset/run container breakdown for both widths
 
-### Highlights
+## Origins
 
-- **Memory-safe** — Rust's compiler guarantees eliminate the segfault and buffer-overflow risks of C-based modules
-- **Dual range** — 32-bit (0 to 2^32-1) and 64-bit (0 to 2^64-1) bitmap types
-- **Binary export** — `R.EXPORT` / `R.IMPORT` serialize to the CRoaring portable format, compatible with Java, Go, Python, C++ libraries
-- **8 bitwise operations** — AND, OR, XOR, NOT, ANDOR, DIFF, DIFF1, ONE
-- **RDB persistence** — bitmaps survive server restarts via `BGSAVE`
-- **No code duplication** — trait-based generic handlers written once, compiled for both bitmap types
-- **3x less code** — ~1,400 lines of Rust vs ~4,500 lines of C in redis-roaring
+valkey-roaring is based on [redis-roaring](https://github.com/aviggiano/redis-roaring) by Antonio Viggiano and contributors. The command surface and semantics follow redis-roaring (currently synced with its v1.7.4 release), and development continues to track its changes and improvements — applications built against redis-roaring's commands work here unchanged. The binary export/import commands address a long-requested capability ([redis-roaring#141](https://github.com/aviggiano/redis-roaring/issues/141)).
 
-## Dependencies
-
-- [roaring](https://crates.io/crates/roaring) 0.11.5 — Pure Rust Roaring Bitmap library (no C dependency)
-- [valkey-module](https://crates.io/crates/valkey-module) 0.1 — Official Valkey module Rust SDK
-- Rust 1.90+ (MSRV)
-
-No C dependencies. No modifications to upstream crates.
-
-## Valkey Version Compatibility
+## Requirements
 
 | Requirement | Version |
 |-------------|---------|
 | Valkey      | 8.1+    |
-| Rust        | 1.90+   |
-| Docker      | 20.10+  |
+| Rust (build)| 1.90+   |
+| Docker      | 20.10+ (optional) |
+
+Dependencies: [roaring](https://crates.io/crates/roaring) 0.11.5 and [valkey-module](https://crates.io/crates/valkey-module) 0.1, both from crates.io, unmodified. No C dependencies.
 
 ## Getting Started
 
@@ -53,7 +45,6 @@ docker compose exec valkey valkey-cli
 ### Build from Source
 
 ```bash
-cd valkey-roaring
 cargo build --release
 # Output: target/release/libvalkey_roaring.so
 ```
@@ -80,7 +71,7 @@ valkey-cli R.BITCOUNT test       # (integer) 1
 
 ## API
 
-All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` variant accepts `u32` values (0 to 4,294,967,295); `R64.*` accepts `u64` values (0 to 18,446,744,073,709,551,615). Behavior is identical.
+All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` variant accepts `u32` values (0 to 4,294,967,295); `R64.*` accepts `u64` values (0 to 18,446,744,073,709,551,615). Behavior is identical. Values above 2⁶³−1 are replied as decimal strings (RESP integers are signed 64-bit).
 
 ### Bit Manipulation
 
@@ -96,7 +87,7 @@ All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` varia
 - `R.GETINTARRAY key` — Get all set bits as sorted integer array
 - `R.APPENDINTARRAY key val [val ...]` — Add integers to bitmap
 - `R.DELETEINTARRAY key val [val ...]` — Remove integers from bitmap
-- `R.RANGEINTARRAY key start end` — Get set bits in [start, end] range (supports pagination)
+- `R.RANGEINTARRAY key start end` — Get set bits within the inclusive value range [start, end]
 
 ### Bit Array
 
@@ -126,6 +117,7 @@ All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` varia
 ### Bitwise Operations
 
 ```
+R.BITOP NOT  destkey srckey [last]
 R.BITOP <op> destkey srckey [srckey ...]
 ```
 
@@ -136,13 +128,15 @@ Same as [BITOP](https://valkey.io/commands/bitop) with extended operations:
 | `AND`     | Intersection of all sources |
 | `OR`      | Union of all sources |
 | `XOR`     | Symmetric difference |
-| `NOT`     | Complement of single source over `[0, max(last, src max)]` — `R.BITOP NOT dest src [last]` |
+| `NOT`     | Complement of single source over `[0, max(last, src max)]` |
 | `ANDOR`   | `(src[1] \| src[2] \| ...) & src[0]` |
 | `DIFF`    | `src[0] - src[1] - src[2] - ...` |
 | `DIFF1`   | `(src[1] \| src[2] \| ...) - src[0]` |
 | `ONE`     | Bits present in exactly one source |
 
 All BITOP operations return the cardinality of the result.
+
+`NOT` accepts an optional `last` argument bounding the universe to complement within; a `last` below the source's max is raised to it. A missing or empty source stores an empty bitmap (returns 0), or the full `[0, last]` range when `last` is given. `R.BITOP` reports its key positions dynamically through the module getkeys API, so `COMMAND GETKEYS`, ACL checks, and cluster routing handle the trailing non-key `last` argument correctly.
 
 ### Export / Import
 
@@ -203,7 +197,7 @@ OK
   ...
 100) (integer) 100
 
-# paginate with RANGEINTARRAY
+# filter by value range
 127.0.0.1:6379> R.RANGEINTARRAY range_test 50 60
  1) (integer) 50
  2) (integer) 51
@@ -231,7 +225,7 @@ OK
 
 # get statistics
 127.0.0.1:6379> R.STAT users:active
-"cardinality: 2\nmin: 42\nmax: 123\nserialized_bytes: 22\n..."
+"type: bitmap\ncardinality: 2\nnumber of containers: 1\nmax value: 123\nmin value: 42\n..."
 
 # Jaccard similarity
 127.0.0.1:6379> R.JACCARD a b
@@ -250,13 +244,13 @@ src/
   bitmap_type.rs      RoaringType trait (abstracts u32 vs u64)
   bitmap32.rs         impl RoaringType for RoaringBitmap (u32)
   bitmap64.rs         impl RoaringType for RoaringTreemap (u64)
-  commands.rs         22 generic command handlers
+  commands.rs         Generic command handlers
   commands_bitop.rs   BITOP dispatch + 8 sub-operations
   error.rs            Error constants
   parse.rs            Argument parsing
 ```
 
-Every command handler is a single generic function parameterized by the `RoaringType` trait. At module load, it is instantiated twice via monomorphization:
+Every command handler is a single generic function parameterized by the `RoaringType` trait. At compile time it is instantiated twice via monomorphization, so one implementation serves both bitmap widths and the two command families cannot drift apart:
 
 ```rust
 fn handle_setbit<T: RoaringType>(ctx, args, vtype) -> ValkeyResult { ... }
@@ -265,8 +259,6 @@ fn handle_setbit<T: RoaringType>(ctx, args, vtype) -> ValkeyResult { ... }
 ["R.SETBIT",   r_setbit,   ...]   // T = RoaringBitmap (u32)
 ["R64.SETBIT", r64_setbit, ...]   // T = RoaringTreemap (u64)
 ```
-
-This eliminates the ~2,300 lines of duplicated C code found in redis-roaring's `r_32.c` / `r_64.c`.
 
 ### Persistence
 
@@ -280,7 +272,7 @@ The module sets Rust's global allocator to `ValkeyAlloc`, routing all allocation
 
 ## Tests
 
-Two layers, mirroring redis-roaring's unit + integration split.
+Three layers, all run by CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request.
 
 **Unit and property tests** (no server needed) — 39 tests covering every
 hand-written algorithm:
@@ -293,12 +285,11 @@ cargo test
   select bounds, u64 reply saturation — including type-boundary edge cases
 - All 7 BITOP kernels checked against a naive reference over ~1,100 randomized
   source combinations (both bitmap widths)
-- R-vs-R64 parity over 12,000 randomized operations (mirrors upstream's
-  `fuzz_r_vs_r64_parity` gate)
+- 32-bit / 64-bit parity over 12,000 randomized operations
 - Serialization round-trips, plus 800+ corrupted/truncated/garbage inputs fed
   through the `R.IMPORT` deserialization path asserting it never panics
 
-**Integration suite** — 263 assertions against a live Valkey instance:
+**Integration suite** — 265 assertions against a live Valkey instance:
 
 ```bash
 # From the repository root (requires running docker compose)
@@ -310,18 +301,20 @@ bash tests/integration.sh
 - CONTAINS with all 4 modes (NONE, ALL, ALL_STRICT, EQ)
 - EXPORT/IMPORT binary round-trip via Lua
 - RDB persistence across server restart
-- Upstream v1.7.3/v1.7.4 parity: dynamic GETKEYS, `BITOP NOT ... last`,
-  duplicate-offset and BITPOS edge cases, crash guards
+- Dynamic GETKEYS, `BITOP NOT ... last`, duplicate-offset and BITPOS edge cases
 - Systematic error coverage: wrong-arity for all 51 commands, WRONGTYPE for
   every key command against a mistyped key, semantic errors (missing keys,
   bad binary, out-of-range values)
 
+**Performance benchmark** — see [Performance](#performance); CI runs a smoke
+subset on every push.
+
 ## Performance
 
-Measured with the harness in `tests/performance/`, a replica of
-[redis-roaring's performance suite](https://github.com/aviggiano/redis-roaring#performance):
-CRoaring's `census1881` dataset, full client round-trip latency per command
-against the dockerized Valkey, compared with the equivalent native commands.
+Benchmark methodology follows redis-roaring's performance suite: CRoaring's
+`census1881` dataset, full client round-trip latency per command against the
+dockerized Valkey, compared with the equivalent native commands. The harness
+lives in `tests/performance/`.
 
 ```bash
 bash tests/performance.sh                    # full run, updates this table
@@ -370,8 +363,7 @@ PERF_MAX_FILES=5 bash tests/performance.sh   # quick smoke run
 <!-- END_PERFORMANCE -->
 
 Notes: native `MIN`/`MAX` don't exist and `BITOP ANDOR`/`BITOP ONE` are not
-supported by Valkey 8.1, so those native rows measure error-reply round-trips
-(upstream measures them against Redis 8.2+, where the BITOP variants exist).
+supported by Valkey 8.1, so those native rows measure error-reply round-trips.
 St.dev. is the per-command standard deviation.
 
 ## CRoaring-Compatible Libraries
@@ -389,7 +381,5 @@ The binary format produced by `R.EXPORT` / `R.IMPORT` is the standard CRoaring p
 ## Known Limitations
 
 - **AOF rewrite** not supported (Valkey Rust SDK limitation)
-- **`R64.SETFULL`** allocates the full u64 range which is impractical — matches redis-roaring behavior
-- **64-bit `R.STAT`** shows basic stats only (cardinality, min, max, serialized_size) — no container breakdown because `RoaringTreemap.map` is private in the roaring crate
+- **`R64.SETFULL`** allocates the full u64 range, which is impractical for real workloads
 - **`R.EXPORT` / `R.IMPORT`** require a client library or Lua — `valkey-cli` drops null bytes from binary data
-

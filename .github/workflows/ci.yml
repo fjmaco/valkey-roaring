@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    name: Build, unit and property tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libclang (bindgen dependency)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build module
+        run: cargo build --release --locked
+
+      - name: Unit and property tests
+        run: cargo test --release --locked
+
+  integration:
+    name: Integration and performance smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tests/performance
+
+      - name: Build image and start Valkey with the module
+        run: docker compose up -d --build
+
+      - name: Wait for the server
+        run: |
+          for _ in $(seq 1 60); do
+            if [ "$(docker compose exec -T valkey valkey-cli PING 2>/dev/null)" = "PONG" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose logs
+          exit 1
+
+      - name: Integration suite
+        run: bash tests/integration.sh
+
+      - name: Performance smoke run
+        run: PERF_MAX_FILES=5 bash tests/performance.sh
+
+      - name: Server logs on failure
+        if: failure()
+        run: docker compose logs

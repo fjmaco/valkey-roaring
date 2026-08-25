@@ -4,6 +4,39 @@ use crate::bitmap_type::RoaringType;
 use roaring::RoaringTreemap;
 use std::io;
 
+/// Container statistics aggregated across a treemap's 32-bit sub-bitmaps.
+#[derive(Default)]
+struct TreemapStats {
+    n_containers: u64,
+    n_array_containers: u64,
+    n_values_array_containers: u64,
+    n_bytes_array_containers: u64,
+    n_bitset_containers: u64,
+    n_values_bitset_containers: u64,
+    n_bytes_bitset_containers: u64,
+    n_run_containers: u64,
+    n_values_run_containers: u64,
+    n_bytes_run_containers: u64,
+}
+
+fn aggregate_stats(tm: &RoaringTreemap) -> TreemapStats {
+    let mut t = TreemapStats::default();
+    for (_, bm) in tm.bitmaps() {
+        let s = bm.statistics();
+        t.n_containers += u64::from(s.n_containers);
+        t.n_array_containers += u64::from(s.n_array_containers);
+        t.n_values_array_containers += u64::from(s.n_values_array_containers);
+        t.n_bytes_array_containers += s.n_bytes_array_containers;
+        t.n_bitset_containers += u64::from(s.n_bitset_containers);
+        t.n_values_bitset_containers += s.n_values_bitset_containers;
+        t.n_bytes_bitset_containers += s.n_bytes_bitset_containers;
+        t.n_run_containers += u64::from(s.n_run_containers);
+        t.n_values_run_containers += u64::from(s.n_values_run_containers);
+        t.n_bytes_run_containers += s.n_bytes_run_containers;
+    }
+    t
+}
+
 impl RoaringType for RoaringTreemap {
     type Value = u64;
 
@@ -195,31 +228,66 @@ impl RoaringType for RoaringTreemap {
     }
 
     fn stat_text(&self) -> String {
-        // RoaringTreemap has no statistics() — use public API only
+        let s = aggregate_stats(self);
         format!(
             "type: bitmap64\n\
              cardinality: {}\n\
+             number of containers: {}\n\
              max value: {}\n\
              min value: {}\n\
-             serialized bytes: {}",
+             serialized bytes: {}\n\
+             number of array containers: {}\n\
+               array container values: {}\n\
+               array container bytes: {}\n\
+             bitset containers: {}\n\
+               bitset container values: {}\n\
+               bitset container bytes: {}\n\
+             run containers: {}\n\
+               run container values: {}\n\
+               run container bytes: {}",
             self.len(),
+            s.n_containers,
             self.max().map_or("(none)".to_string(), |v| v.to_string()),
             self.min().map_or("(none)".to_string(), |v| v.to_string()),
             self.serialized_size(),
+            s.n_array_containers,
+            s.n_values_array_containers,
+            s.n_bytes_array_containers,
+            s.n_bitset_containers,
+            s.n_values_bitset_containers,
+            s.n_bytes_bitset_containers,
+            s.n_run_containers,
+            s.n_values_run_containers,
+            s.n_bytes_run_containers,
         )
     }
 
     fn stat_json(&self) -> String {
+        let s = aggregate_stats(self);
         format!(
             "{{\"type\":\"bitmap64\",\
              \"cardinality\":\"{}\",\
+             \"number_of_containers\":\"{}\",\
              \"max_value\":\"{}\",\
              \"min_value\":\"{}\",\
-             \"serialized_bytes\":\"{}\"}}",
+             \"serialized_bytes\":\"{}\",\
+             \"array_container\":{{\"number_of_containers\":\"{}\",\"container_cardinality\":\"{}\",\"container_allocated_bytes\":\"{}\"}},\
+             \"bitset_container\":{{\"number_of_containers\":\"{}\",\"container_cardinality\":\"{}\",\"container_allocated_bytes\":\"{}\"}},\
+             \"run_container\":{{\"number_of_containers\":\"{}\",\"container_cardinality\":\"{}\",\"container_allocated_bytes\":\"{}\"}}}}",
             self.len(),
+            s.n_containers,
             self.max().map_or_else(|| "null".to_string(), |v| v.to_string()),
             self.min().map_or_else(|| "null".to_string(), |v| v.to_string()),
             self.serialized_size(),
+            s.n_array_containers,
+            s.n_values_array_containers,
+            s.n_bytes_array_containers,
+            s.n_bitset_containers,
+            s.n_values_bitset_containers,
+            s.n_bytes_bitset_containers,
+            s.n_run_containers,
+            s.n_values_run_containers,
+            s.n_bytes_run_containers,
         )
     }
 }
@@ -356,9 +424,15 @@ mod delegation_tests {
         assert!(text.contains("type: bitmap64"));
         assert!(text.contains("cardinality: 2"));
         assert!(text.contains("max value: 5000000000"));
+        // Container breakdown aggregated across sub-bitmaps: the two values
+        // land in different 32-bit partitions -> two array containers.
+        assert!(text.contains("number of containers: 2"));
+        assert!(text.contains("number of array containers: 2"));
         let json = RoaringType::stat_json(&b);
         assert!(json.contains("\"type\":\"bitmap64\""));
         assert!(json.contains("\"max_value\":\"5000000000\""));
+        assert!(json.contains("\"number_of_containers\":\"2\""));
+        assert!(json.contains("\"array_container\""));
         assert_eq!(json.matches('{').count(), json.matches('}').count());
         // Empty treemap exercises the none/null formatting branches.
         let e = RoaringTreemap::new();

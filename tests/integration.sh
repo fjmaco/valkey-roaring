@@ -402,6 +402,9 @@ echo "--- R64 STAT ---"
 result=$(run R.STAT k64exp)
 assert_contains "R.STAT on R64 key" "type: bitmap64" "$result"
 assert_contains "R.STAT on R64 cardinality" "cardinality: 2" "$result"
+assert_contains "R.STAT on R64 container breakdown" "number of containers" "$result"
+result=$(run R.STAT k64exp JSON)
+assert_contains "R.STAT JSON on R64 containers" "\"array_container\"" "$result"
 
 echo "--- R64 CONTAINS ---"
 run R64.SETINTARRAY k64f 1 2 3 4 5 > /dev/null
