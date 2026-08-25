@@ -1,0 +1,12 @@
+services:
+  valkey:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey-data:/data
+
+volumes:
+  valkey-data:

@@ -2,11 +2,20 @@
 name = "valkey-roaring"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.82.0"
+rust-version = "1.90.0"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 valkey-module = "0.1"
-roaring = "0.11"
+roaring = "0.11.5"
+
+[dev-dependencies]
+# Test builds only: let ValkeyAlloc fall back to the system allocator so
+# `cargo test` can run without a live Valkey. Production builds are unaffected.
+valkey-module = { version = "0.1", features = ["enable-system-alloc"] }
+
+[features]
+# Exposes internal algorithm entry points for the fuzz targets in fuzz/.
+fuzzing = []

@@ -25,24 +25,36 @@ fn require_existing<'a, T: RoaringType>(
     vtype: &ValkeyType,
 ) -> Result<&'a T, ValkeyError> {
     key.get_value::<T>(vtype)?
-        .ok_or_else(|| ValkeyError::Str(ERR_KEY_NOT_FOUND))
+        .ok_or(ValkeyError::Str(ERR_KEY_NOT_FOUND))
 }
 
 // ============================================================
 // Value parsing helpers — pick u32 or u64 based on T::Value
 // ============================================================
-fn parse_value<T: RoaringType>(arg: &ValkeyString, name: &str) -> Result<T::Value, ValkeyError> {
-    // We need to parse into T::Value. Use i64 as intermediate since ValkeyString
-    // provides that. We parse the string manually for u32/u64 range.
+pub(crate) fn parse_value<T: RoaringType>(
+    arg: &ValkeyString,
+    name: &str,
+) -> Result<T::Value, ValkeyError> {
     let s = arg.to_string_lossy();
     let val: u64 = s.parse().map_err(|_| {
-        ValkeyError::String(format!("ERR invalid {}: must be a non-negative integer", name))
+        ValkeyError::String(format!(
+            "ERR invalid {}: must be a non-negative integer",
+            name
+        ))
     })?;
-    // Try to convert u64 -> T::Value via i64 intermediate
-    let as_i64 = val as i64;
-    T::Value::try_from(as_i64).map_err(|_| {
-        ValkeyError::String(format!("ERR invalid {}: value out of range", name))
-    })
+    T::Value::try_from(val)
+        .map_err(|_| ValkeyError::String(format!("ERR invalid {}: value out of range", name)))
+}
+
+/// Reply with a bitmap value. Values that fit i64 are integer replies; larger
+/// u64 values are decimal bulk strings, matching the C module's ReplyWithUint64.
+pub(crate) fn value_reply<T: RoaringType>(v: T::Value) -> ValkeyValue {
+    let i = T::value_to_i64(v); // saturates at i64::MAX
+    if i == i64::MAX && v.to_string() != i.to_string() {
+        ValkeyValue::BulkString(v.to_string())
+    } else {
+        ValkeyValue::Integer(i)
+    }
 }
 
 // ============================================================
@@ -68,6 +80,7 @@ pub fn handle_setbit<T: RoaringType>(
     } else {
         bitmap.remove(offset);
     }
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::Integer(previous as i64))
 }
@@ -142,6 +155,7 @@ pub fn handle_clearbits<T: RoaringType>(
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
             let count = bitmap.remove_many_counted(&offsets);
+            ctx.replicate_verbatim();
             Ok(ValkeyValue::Integer(count as i64))
         }
         None => Ok(ValkeyValue::Integer(0)),
@@ -164,6 +178,7 @@ pub fn handle_clear<T: RoaringType>(
         Some(bitmap) => {
             let card = bitmap.len();
             bitmap.clear();
+            ctx.replicate_verbatim();
             Ok(ValkeyValue::Integer(card as i64))
         }
         None => Ok(ValkeyValue::Null),
@@ -189,6 +204,7 @@ pub fn handle_setintarray<T: RoaringType>(
     let key = ctx.open_key_writable(&args[1]);
     let bm = T::from_values(&vals);
     key.set_value(vtype, bm)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -207,10 +223,7 @@ pub fn handle_getintarray<T: RoaringType>(
     let key = ctx.open_key(&args[1]);
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
-            let arr: Vec<ValkeyValue> = bitmap
-                .iter_values()
-                .map(|v| ValkeyValue::Integer(T::value_to_i64(v)))
-                .collect();
+            let arr: Vec<ValkeyValue> = bitmap.iter_values().map(|v| value_reply::<T>(v)).collect();
             Ok(ValkeyValue::Array(arr))
         }
         None => Ok(ValkeyValue::Array(vec![])),
@@ -236,6 +249,7 @@ pub fn handle_appendintarray<T: RoaringType>(
     let key = ctx.open_key_writable(&args[1]);
     let bitmap = get_or_create::<T>(&key, vtype)?;
     bitmap.insert_many(&vals);
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -259,6 +273,7 @@ pub fn handle_deleteintarray<T: RoaringType>(
     let key = ctx.open_key_writable(&args[1]);
     let bitmap = get_or_create::<T>(&key, vtype)?;
     bitmap.remove_many(&vals);
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -277,12 +292,18 @@ pub fn handle_rangeintarray<T: RoaringType>(
     let start = parse_value::<T>(&args[2], "start")?;
     let end = parse_value::<T>(&args[3], "end")?;
 
+    // Inverted range replies empty (upstream parity). Must be checked here:
+    // roaring's range() panics on start > end, which would abort the server.
+    if start > end {
+        return Ok(ValkeyValue::Array(vec![]));
+    }
+
     let key = ctx.open_key(&args[1]);
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
             let arr: Vec<ValkeyValue> = bitmap
                 .iter_range(start, end)
-                .map(|v| ValkeyValue::Integer(T::value_to_i64(v)))
+                .map(|v| value_reply::<T>(v))
                 .collect();
             Ok(ValkeyValue::Array(arr))
         }
@@ -306,6 +327,7 @@ pub fn handle_setbitarray<T: RoaringType>(
 
     let key = ctx.open_key_writable(&args[1]);
     key.set_value(vtype, bm)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -324,6 +346,13 @@ pub fn handle_getbitarray<T: RoaringType>(
     let key = ctx.open_key(&args[1]);
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
+            // The reply is max+1 bytes; refuse instead of risking an
+            // allocation-failure abort on huge maxima.
+            if let Some(max) = bitmap.max_val() {
+                if T::value_to_i64(max) as u64 >= MAX_RANGE_SIZE {
+                    return Err(ValkeyError::Str(ERR_RANGE_TOO_LARGE));
+                }
+            }
             let bits = bitmap.to_bit_array();
             let s = String::from_utf8(bits).unwrap_or_default();
             Ok(ValkeyValue::BulkString(s))
@@ -353,6 +382,7 @@ pub fn handle_setrange<T: RoaringType>(
     let key = ctx.open_key_writable(&args[1]);
     let bitmap = get_or_create::<T>(&key, vtype)?;
     bitmap.insert_range_inclusive(start, end);
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -375,6 +405,7 @@ pub fn handle_setfull<T: RoaringType>(
 
     let bm = T::full();
     key.set_value(vtype, bm)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -416,13 +447,13 @@ pub fn handle_bitpos<T: RoaringType>(
             if bit {
                 // First set bit
                 match bitmap.select(0) {
-                    Some(v) => Ok(ValkeyValue::Integer(T::value_to_i64(v))),
+                    Some(v) => Ok(value_reply::<T>(v)),
                     None => Ok(ValkeyValue::Integer(-1)),
                 }
             } else {
                 // First unset bit
                 match bitmap.nth_absent(1) {
-                    Some(v) => Ok(ValkeyValue::Integer(T::value_to_i64(v))),
+                    Some(v) => Ok(value_reply::<T>(v)),
                     None => Ok(ValkeyValue::Integer(-1)),
                 }
             }
@@ -452,7 +483,7 @@ pub fn handle_min<T: RoaringType>(
     let key = ctx.open_key(&args[1]);
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => match bitmap.min_val() {
-            Some(v) => Ok(ValkeyValue::Integer(T::value_to_i64(v))),
+            Some(v) => Ok(value_reply::<T>(v)),
             None => Ok(ValkeyValue::Integer(-1)),
         },
         None => Ok(ValkeyValue::Integer(-1)),
@@ -473,7 +504,7 @@ pub fn handle_max<T: RoaringType>(
     let key = ctx.open_key(&args[1]);
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => match bitmap.max_val() {
-            Some(v) => Ok(ValkeyValue::Integer(T::value_to_i64(v))),
+            Some(v) => Ok(value_reply::<T>(v)),
             None => Ok(ValkeyValue::Integer(-1)),
         },
         None => Ok(ValkeyValue::Integer(-1)),
@@ -495,6 +526,7 @@ pub fn handle_optimize<T: RoaringType>(
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
             bitmap.optimize();
+            ctx.replicate_verbatim();
             Ok(ValkeyValue::SimpleStringStatic("OK"))
         }
         None => Ok(ValkeyValue::SimpleStringStatic("OK")),
@@ -589,6 +621,7 @@ pub fn handle_diff<T: RoaringType>(
 
     let dest = ctx.open_key_writable(&args[1]);
     dest.set_value(vtype, result)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -647,6 +680,8 @@ pub fn handle_import<T: RoaringType>(
         }
     }
 
+    ctx.replicate_verbatim();
+
     // Return cardinality after import
     let bitmap = key.get_value::<T>(vtype)?.unwrap();
     Ok(ValkeyValue::Integer(bitmap.len() as i64))
@@ -656,3 +691,36 @@ pub fn handle_import<T: RoaringType>(
 // R.STAT (shared handler — detects type at runtime)
 // This is implemented in lib.rs since it needs both types.
 // ============================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roaring::{RoaringBitmap, RoaringTreemap};
+
+    #[test]
+    fn value_reply_integer_for_representable_values() {
+        assert_eq!(value_reply::<RoaringBitmap>(0), ValkeyValue::Integer(0));
+        assert_eq!(value_reply::<RoaringBitmap>(5), ValkeyValue::Integer(5));
+        assert_eq!(
+            value_reply::<RoaringBitmap>(u32::MAX),
+            ValkeyValue::Integer(u32::MAX as i64)
+        );
+        assert_eq!(
+            value_reply::<RoaringTreemap>(i64::MAX as u64),
+            ValkeyValue::Integer(i64::MAX)
+        );
+    }
+
+    #[test]
+    fn value_reply_string_above_i64_max() {
+        // Matches the C module's ReplyWithUint64: decimal bulk string.
+        assert_eq!(
+            value_reply::<RoaringTreemap>(i64::MAX as u64 + 1),
+            ValkeyValue::BulkString("9223372036854775808".to_string())
+        );
+        assert_eq!(
+            value_reply::<RoaringTreemap>(u64::MAX),
+            ValkeyValue::BulkString("18446744073709551615".to_string())
+        );
+    }
+}
