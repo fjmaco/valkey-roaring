@@ -38,8 +38,10 @@ copilot-instructions.md
 .DS_Store
 Thumbs.db
 
-# External validation harness (local-only; see testing/README.md)
-/testing/
+# Validation harness artifacts (the harness itself is tracked)
+testing/.venv/
+testing/datasets/
+__pycache__/
 
 # Docs build artifacts
 docs/node_modules/
