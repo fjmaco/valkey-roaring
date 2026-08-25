@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "Valkey Roaring"
   text: "Roaring Bitmaps for Valkey"
-  tagline: Compressed bitmaps as native Valkey types — 51 commands, 32/64-bit variants, and cross-language binary export.
+  tagline: Compressed bitmaps as native server types — 51 commands, 32/64-bit variants, and cross-language binary export. Runs on Valkey 8.1+ and Redis 7.4+.
   actions:
     - theme: brand
       text: Getting Started
@@ -31,7 +31,7 @@ features:
     link: /guide/performance
   - icon: 🔁
     title: Drop-in redis-roaring compatibility
-    details: The command surface follows redis-roaring, kept reply-identical by randomized differential testing against the original module.
+    details: The command surface follows redis-roaring, kept reply-identical by differential testing against the original module — and the same .so loads on both Valkey and Redis, so existing deployments migrate unchanged.
   - icon: 💾
     title: Persistence and replication
     details: RDB snapshots, AOF with the default preamble configuration, verbatim replication to replicas, DUMP/RESTORE and COPY support.

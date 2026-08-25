@@ -22,7 +22,7 @@ function commandSidebar() {
 export default defineConfig({
   title: "Valkey Roaring",
   lang: "en-US",
-  description: "Roaring Bitmaps for Valkey",
+  description: "Roaring Bitmaps for Valkey and Redis",
   base: BASE_URL,
   cleanUrls: true,
   themeConfig: {
