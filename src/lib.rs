@@ -420,7 +420,7 @@ fn r64_import(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
 valkey_module! {
     name: "valkey-roaring",
     // major*10000 + minor*100 + patch, matching redis-roaring's encoding
-    version: 10100,
+    version: 10101,
     allocator: (ValkeyAlloc, ValkeyAlloc),
     data_types: [
         BITMAP32_TYPE,
