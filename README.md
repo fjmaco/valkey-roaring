@@ -350,6 +350,12 @@ cargo +nightly fuzz run bitop_kernels   # BITOP kernels vs a naive reference
 **Performance benchmark** — see [Performance](#performance); CI runs a smoke
 subset on every push.
 
+**External validation harness** — [`testing/`](testing/) holds twelve
+end-to-end suites run on demand (`bash testing/run_all.sh`): real-dataset
+semantics against a reference model, CRoaring interop, differential runs
+against redis-roaring, replication, cluster, torture, and workflow
+contracts. See [testing/README.md](testing/README.md).
+
 ## Performance
 
 Benchmark methodology follows redis-roaring's performance suite: CRoaring's
