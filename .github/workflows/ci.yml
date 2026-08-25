@@ -10,7 +10,7 @@ jobs:
     name: Build, unit and property tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install libclang (bindgen dependency)
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
@@ -35,7 +35,7 @@ jobs:
     name: Integration and performance smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -71,7 +71,7 @@ jobs:
     name: Unit-layer coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install libclang (bindgen dependency)
         run: sudo apt-get update && sudo apt-get install -y libclang-dev
@@ -103,7 +103,7 @@ jobs:
       # No-op until the CODECOV_TOKEN repository secret is added (free for
       # public repos at codecov.io); never fails the build.
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
