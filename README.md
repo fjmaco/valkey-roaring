@@ -22,9 +22,9 @@ This is a Rust rewrite of the C-based [redis-roaring](https://github.com/aviggia
 
 ## Dependencies
 
-- [roaring](https://crates.io/crates/roaring) 0.11 — Pure Rust Roaring Bitmap library (no C dependency)
+- [roaring](https://crates.io/crates/roaring) 0.11.5 — Pure Rust Roaring Bitmap library (no C dependency)
 - [valkey-module](https://crates.io/crates/valkey-module) 0.1 — Official Valkey module Rust SDK
-- Rust 1.82+ (MSRV)
+- Rust 1.90+ (MSRV)
 
 No C dependencies. No modifications to upstream crates.
 
@@ -33,7 +33,7 @@ No C dependencies. No modifications to upstream crates.
 | Requirement | Version |
 |-------------|---------|
 | Valkey      | 8.1+    |
-| Rust        | 1.82+   |
+| Rust        | 1.90+   |
 | Docker      | 20.10+  |
 
 ## Getting Started
@@ -136,7 +136,7 @@ Same as [BITOP](https://valkey.io/commands/bitop) with extended operations:
 | `AND`     | Intersection of all sources |
 | `OR`      | Union of all sources |
 | `XOR`     | Symmetric difference |
-| `NOT`     | Complement of single source (bits in [0, max]) |
+| `NOT`     | Complement of single source over `[0, max(last, src max)]` — `R.BITOP NOT dest src [last]` |
 | `ANDOR`   | `(src[1] \| src[2] \| ...) & src[0]` |
 | `DIFF`    | `src[0] - src[1] - src[2] - ...` |
 | `DIFF1`   | `(src[1] \| src[2] \| ...) - src[0]` |
@@ -280,21 +280,99 @@ The module sets Rust's global allocator to `ValkeyAlloc`, routing all allocation
 
 ## Tests
 
-The integration test suite runs **102 assertions** against a live Valkey instance:
+Two layers, mirroring redis-roaring's unit + integration split.
+
+**Unit and property tests** (no server needed) — 39 tests covering every
+hand-written algorithm:
+
+```bash
+cargo test
+```
+
+- `nth_absent`, `flip_inclusive`, bit-array codecs, `remove_many_counted`,
+  select bounds, u64 reply saturation — including type-boundary edge cases
+- All 7 BITOP kernels checked against a naive reference over ~1,100 randomized
+  source combinations (both bitmap widths)
+- R-vs-R64 parity over 12,000 randomized operations (mirrors upstream's
+  `fuzz_r_vs_r64_parity` gate)
+- Serialization round-trips, plus 800+ corrupted/truncated/garbage inputs fed
+  through the `R.IMPORT` deserialization path asserting it never panics
+
+**Integration suite** — 263 assertions against a live Valkey instance:
 
 ```bash
 # From the repository root (requires running docker compose)
 bash tests/integration.sh
 ```
 
-Coverage includes:
-
 - Every command for both 32-bit and 64-bit types
 - All 8 BITOP sub-operations with correctness checks
 - CONTAINS with all 4 modes (NONE, ALL, ALL_STRICT, EQ)
 - EXPORT/IMPORT binary round-trip via Lua
 - RDB persistence across server restart
-- Error handling (wrong type, wrong arity, nonexistent keys)
+- Upstream v1.7.3/v1.7.4 parity: dynamic GETKEYS, `BITOP NOT ... last`,
+  duplicate-offset and BITPOS edge cases, crash guards
+- Systematic error coverage: wrong-arity for all 51 commands, WRONGTYPE for
+  every key command against a mistyped key, semantic errors (missing keys,
+  bad binary, out-of-range values)
+
+## Performance
+
+Measured with the harness in `tests/performance/`, a replica of
+[redis-roaring's performance suite](https://github.com/aviggiano/redis-roaring#performance):
+CRoaring's `census1881` dataset, full client round-trip latency per command
+against the dockerized Valkey, compared with the equivalent native commands.
+
+```bash
+bash tests/performance.sh                    # full run, updates this table
+PERF_MAX_FILES=5 bash tests/performance.sh   # quick smoke run
+```
+
+<!-- BEGIN_PERFORMANCE -->
+|               OP |     TIME/OP (us) |     ST.DEV. (us) |
+| ---------------- | ---------------- | ---------------- |
+|         R.SETBIT |            29.12 |             6.88 |
+|       R64.SETBIT |            28.99 |             4.54 |
+|           SETBIT |            28.77 |             4.62 |
+|         R.GETBIT |            28.86 |             6.09 |
+|       R64.GETBIT |            28.78 |             6.29 |
+|           GETBIT |            28.63 |             6.04 |
+|       R.BITCOUNT |            40.98 |             6.35 |
+|     R64.BITCOUNT |            40.97 |             6.48 |
+|         BITCOUNT |            48.54 |             7.46 |
+|         R.BITPOS |            46.27 |            35.11 |
+|       R64.BITPOS |            39.86 |             2.22 |
+|           BITPOS |            43.21 |             6.03 |
+|      R.BITOP NOT |           116.74 |           308.88 |
+|    R64.BITOP NOT |           115.90 |           308.08 |
+|        BITOP NOT |           155.53 |            67.22 |
+|      R.BITOP AND |            33.26 |            17.18 |
+|    R64.BITOP AND |            32.01 |             9.23 |
+|        BITOP AND |           152.72 |           141.08 |
+|       R.BITOP OR |            36.60 |            22.80 |
+|     R64.BITOP OR |            35.55 |            24.60 |
+|         BITOP OR |           197.85 |           203.82 |
+|      R.BITOP XOR |            36.59 |            31.25 |
+|    R64.BITOP XOR |            35.87 |            25.38 |
+|        BITOP XOR |           183.51 |           181.87 |
+|    R.BITOP ANDOR |            33.50 |            15.68 |
+|  R64.BITOP ANDOR |            35.09 |            10.71 |
+|      BITOP ANDOR |            28.46 |             0.93 |
+|      R.BITOP ONE |            34.75 |            25.99 |
+|    R64.BITOP ONE |            35.92 |            29.46 |
+|        BITOP ONE |            28.46 |             1.41 |
+|            R.MIN |            29.80 |             3.35 |
+|          R64.MIN |            28.33 |             1.61 |
+|              MIN |            28.26 |             1.26 |
+|            R.MAX |            28.18 |             1.63 |
+|          R64.MAX |            28.12 |             1.04 |
+|              MAX |            30.25 |             7.36 |
+<!-- END_PERFORMANCE -->
+
+Notes: native `MIN`/`MAX` don't exist and `BITOP ANDOR`/`BITOP ONE` are not
+supported by Valkey 8.1, so those native rows measure error-reply round-trips
+(upstream measures them against Redis 8.2+, where the BITOP variants exist).
+St.dev. is the per-command standard deviation.
 
 ## CRoaring-Compatible Libraries
 

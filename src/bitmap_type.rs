@@ -9,7 +9,7 @@ pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
     type Value: Copy
         + Ord
         + fmt::Display
-        + TryFrom<i64>
+        + TryFrom<u64>
         + 'static;
 
     /// Convert a value to i64 for Valkey replies. Values > i64::MAX become i64::MAX.
@@ -19,7 +19,6 @@ pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
     fn new() -> Self;
     fn full() -> Self;
     fn from_values(vals: &[Self::Value]) -> Self;
-    fn from_range_inclusive(start: Self::Value, end: Self::Value) -> Self;
 
     // -- Element ops --
     fn insert(&mut self, v: Self::Value) -> bool;
@@ -36,7 +35,6 @@ pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
 
     // -- Cardinality --
     fn len(&self) -> u64;
-    fn is_empty(&self) -> bool;
     fn min_val(&self) -> Option<Self::Value>;
     fn max_val(&self) -> Option<Self::Value>;
 
@@ -47,9 +45,6 @@ pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
     fn sub_assign(&mut self, other: &Self);
 
     // -- Set operations (owned) --
-    fn bitor_owned(self, other: Self) -> Self;
-    fn bitand_owned(self, other: Self) -> Self;
-    fn bitxor_owned(self, other: Self) -> Self;
     fn sub_owned(self, other: Self) -> Self;
 
     // -- Comparisons --
@@ -67,8 +62,9 @@ pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
     fn nth_absent(&self, n: u64) -> Option<Self::Value>;
 
     // -- NOT/Flip --
-    /// Return complement of bitmap in [0, end_exclusive).
-    fn flip_to(&self, end_exclusive: Self::Value) -> Self;
+    /// Return complement of bitmap in [0, last] (inclusive). Bits above `last`
+    /// are preserved as-is, matching CRoaring's flip semantics.
+    fn flip_inclusive(&self, last: Self::Value) -> Self;
 
     // -- Serialization --
     fn serialize_into<W: io::Write>(&self, writer: W) -> io::Result<()>;

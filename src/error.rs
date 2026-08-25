@@ -2,7 +2,6 @@
 
 pub const ERR_KEY_NOT_FOUND: &str = "Roaring: key does not exist";
 pub const ERR_KEY_EXISTS: &str = "Roaring: key already exist";
-pub const ERR_SET_VALUE: &str = "Roaring: error setting value";
 pub const ERR_RANGE_TOO_LARGE: &str = "Roaring: range too large: maximum 100000000 elements";
 pub const ERR_INVALID_END: &str = "ERR invalid end: must be >= start";
 pub const ERR_SYNTAX: &str = "ERR syntax error";

@@ -2,16 +2,6 @@
 
 use valkey_module::{ValkeyError, ValkeyString};
 
-pub fn parse_u32(arg: &ValkeyString, name: &str) -> Result<u32, ValkeyError> {
-    let s = arg.to_string_lossy();
-    s.parse::<u32>().map_err(|_| {
-        ValkeyError::String(format!(
-            "ERR invalid {}: must be an unsigned 32 bit integer",
-            name
-        ))
-    })
-}
-
 pub fn parse_u64(arg: &ValkeyString, name: &str) -> Result<u64, ValkeyError> {
     let s = arg.to_string_lossy();
     s.parse::<u64>().map_err(|_| {
