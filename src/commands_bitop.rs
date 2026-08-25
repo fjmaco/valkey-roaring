@@ -41,7 +41,7 @@ fn report_bitop_keys(ctx: &Context, args: &[ValkeyString]) {
             ctx.key_at_pos(2);
             ctx.key_at_pos(3);
         }
-    } else if is_variadic_op(&op) {
+    } else if is_variadic_op(&op) && args.len() >= 5 {
         for pos in 2..args.len() {
             ctx.key_at_pos(pos as i32);
         }
@@ -72,6 +72,10 @@ pub fn handle_bitop<T: RoaringType>(
     }
     if !is_variadic_op(&op) {
         return Err(ValkeyError::Str(ERR_SYNTAX));
+    }
+    // Variadic operations need at least two sources (redis-roaring arity).
+    if args.len() < 5 {
+        return Err(ValkeyError::WrongArity);
     }
 
     // Read all source bitmaps (clone to handle dest-is-source aliasing)

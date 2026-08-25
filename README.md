@@ -94,7 +94,7 @@ All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` varia
 - `R.SETBIT key offset 0|1` — Set or clear a bit (same as [SETBIT](https://valkey.io/commands/setbit))
 - `R.GETBIT key offset` — Get bit value (same as [GETBIT](https://valkey.io/commands/getbit))
 - `R.GETBITS key offset [offset ...]` — Get multiple bit values at once
-- `R.CLEARBITS key offset [offset ...]` — Clear multiple bits, returns count actually cleared
+- `R.CLEARBITS key offset [offset ...] [COUNT]` — Clear multiple bits; replies OK, or the count actually cleared with the `COUNT` flag (null for a missing key)
 - `R.CLEAR key` — Reset bitmap to empty, returns previous cardinality
 
 ### Bulk Set/Get
@@ -103,7 +103,7 @@ All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` varia
 - `R.GETINTARRAY key` — Get all set bits as sorted integer array
 - `R.APPENDINTARRAY key val [val ...]` — Add integers to bitmap
 - `R.DELETEINTARRAY key val [val ...]` — Remove integers from bitmap
-- `R.RANGEINTARRAY key start end` — Get set bits within the inclusive value range [start, end]
+- `R.RANGEINTARRAY key start end` — Paginate the sorted value array: elements at 0-based positions [start, end], truncated at the cardinality (max window 100,000,000)
 
 ### Bit Array
 
@@ -112,7 +112,7 @@ All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` varia
 
 ### Range and Fill
 
-- `R.SETRANGE key start end` — Set all bits in [start, end]
+- `R.SETRANGE key start end` — Set all bits in the end-exclusive range [start, end)
 - `R.SETFULL key` — Set all possible bits (errors if key exists)
 
 ### Aggregation
@@ -128,13 +128,13 @@ All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` varia
 - `R.JACCARD key1 key2` — Jaccard similarity index
 - `R.DIFF dest key1 key2` — Store `key1 - key2` in dest
 
-**CONTAINS modes:** `NONE` (any overlap), `ALL` (subset), `ALL_STRICT` (proper subset), `EQ` (equal).
+**CONTAINS modes:** default (no mode argument) checks for any overlap; explicit modes are `ALL` (subset), `ALL_STRICT` (proper subset), `EQ` (equal).
 
 ### Bitwise Operations
 
 ```
 R.BITOP NOT  destkey srckey [last]
-R.BITOP <op> destkey srckey [srckey ...]
+R.BITOP <op> destkey srckey srckey [srckey ...]
 ```
 
 Same as [BITOP](https://valkey.io/commands/bitop) with extended operations:
@@ -210,8 +210,8 @@ $ valkey-cli
 127.0.0.1:6379> R.BITCOUNT users:active
 (integer) 2
 
-# create a bitmap from a range
-127.0.0.1:6379> R.SETRANGE range_test 1 100
+# create a bitmap from a range — end-exclusive: sets 1 through 100
+127.0.0.1:6379> R.SETRANGE range_test 1 101
 OK
 
 # get all numbers as an integer array
@@ -221,8 +221,8 @@ OK
   ...
 100) (integer) 100
 
-# filter by value range
-127.0.0.1:6379> R.RANGEINTARRAY range_test 50 60
+# paginate: elements at positions 49..59 of the sorted array
+127.0.0.1:6379> R.RANGEINTARRAY range_test 49 59
  1) (integer) 50
  2) (integer) 51
 ...
@@ -299,7 +299,7 @@ The module sets Rust's global allocator to `ValkeyAlloc`, routing all allocation
 
 Three layers, all run by CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request, alongside `rustfmt`/`clippy` gates and a unit-layer coverage report. The [benchmark workflow](.github/workflows/benchmark.yml) refreshes the table below whenever performance-relevant code changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for running the gates locally.
 
-**Unit and property tests** (no server needed) — 39 tests covering every
+**Unit and property tests** (no server needed) — 38 tests covering every
 hand-written algorithm:
 
 ```bash
@@ -314,7 +314,7 @@ cargo test
 - Serialization round-trips, plus 800+ corrupted/truncated/garbage inputs fed
   through the `R.IMPORT` deserialization path asserting it never panics
 
-**Integration suite** — 272 assertions against a live Valkey instance:
+**Integration suite** — 283 assertions against a live Valkey instance:
 
 ```bash
 # From the repository root (requires running docker compose)

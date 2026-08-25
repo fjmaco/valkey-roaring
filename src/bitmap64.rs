@@ -191,22 +191,14 @@ impl RoaringType for RoaringTreemap {
         RoaringTreemap::optimize(self)
     }
 
-    fn insert_range_inclusive(&mut self, start: u64, end: u64) -> u64 {
-        self.insert_range(start..=end)
+    fn insert_range_exclusive(&mut self, start: u64, end: u64) -> u64 {
+        self.insert_range(start..end)
     }
 
     fn iter_values(&self) -> Box<dyn Iterator<Item = u64> + '_> {
         Box::new(self.iter())
     }
 
-    fn iter_range(&self, start: u64, end: u64) -> Box<dyn Iterator<Item = u64> + '_> {
-        // RoaringTreemap has no range() method; filter the iterator
-        Box::new(
-            self.iter()
-                .skip_while(move |&v| v < start)
-                .take_while(move |&v| v <= end),
-        )
-    }
 
     fn from_bit_array(bits: &[u8]) -> Self {
         let mut bm = RoaringTreemap::new();
@@ -369,13 +361,6 @@ mod tests {
         assert!(b.contains(0) && b.contains(100_000));
     }
 
-    #[test]
-    fn iter_range_filters_inclusive() {
-        let b = bm(&[1, 5, 10]);
-        assert_eq!(b.iter_range(2, 9).collect::<Vec<_>>(), vec![5]);
-        assert_eq!(b.iter_range(1, 10).collect::<Vec<_>>(), vec![1, 5, 10]);
-        assert_eq!(b.iter_range(6, 9).collect::<Vec<_>>(), Vec::<u64>::new());
-    }
 
     #[test]
     fn remove_many_counted_duplicates() {
@@ -406,7 +391,7 @@ mod delegation_tests {
         assert_eq!(RoaringType::contains_many(&b, &[1, 4]), vec![true, false]);
         RoaringType::remove_many(&mut b, &[1, 9]);
         assert!(!RoaringType::contains(&b, 1));
-        assert_eq!(RoaringType::insert_range_inclusive(&mut b, 10, 12), 3);
+        assert_eq!(RoaringType::insert_range_exclusive(&mut b, 10, 13), 3);
         assert_eq!(
             RoaringType::iter_values(&b).count() as u64,
             RoaringType::len(&b)

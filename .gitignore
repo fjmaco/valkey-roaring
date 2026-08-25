@@ -37,3 +37,6 @@ copilot-instructions.md
 # OS
 .DS_Store
 Thumbs.db
+
+# External validation harness (local-only; see testing/README.md)
+/testing/

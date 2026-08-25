@@ -71,15 +71,12 @@ pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
     fn optimize(&mut self) -> bool;
 
     // -- Range operations --
-    fn insert_range_inclusive(&mut self, start: Self::Value, end: Self::Value) -> u64;
+    /// Insert every value in [start, end) — end-exclusive, like CRoaring's
+    /// add_range (redis-roaring's SETRANGE semantics).
+    fn insert_range_exclusive(&mut self, start: Self::Value, end: Self::Value) -> u64;
 
     // -- Iterator --
     fn iter_values(&self) -> Box<dyn Iterator<Item = Self::Value> + '_>;
-    fn iter_range(
-        &self,
-        start: Self::Value,
-        end: Self::Value,
-    ) -> Box<dyn Iterator<Item = Self::Value> + '_>;
 
     // -- Bit array --
     fn from_bit_array(bits: &[u8]) -> Self;

@@ -21,7 +21,7 @@ cargo clippy --release --all-targets -- -D warnings
 cargo test --release              # 39 unit and property tests
 
 docker compose up -d              # build + start Valkey with the module
-bash tests/integration.sh         # 272 assertions against the live server
+bash tests/integration.sh         # 283 assertions against the live server
 
 # optional, needs a nightly toolchain (CI runs these too):
 cargo +nightly fuzz run import_bytes -- -max_total_time=60

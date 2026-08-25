@@ -63,17 +63,17 @@ result=$(run R.GETBITS k2 1 2 3 4 5)
 expected=$(printf "1\n0\n1\n0\n1")
 assert_eq "GETBITS multi" "$expected" "$result"
 result=$(run R.GETBITS nonexist 1 2 3)
-expected=$(printf "0\n0\n0")
-assert_eq "GETBITS nonexistent key" "$expected" "$result"
+assert_eq "GETBITS nonexistent key is empty array" "" "$result"
 
 # -------------------------------------------------------
 echo "--- CLEARBITS ---"
 run R.SETINTARRAY k3 1 2 3 4 5 > /dev/null
-assert_eq "CLEARBITS clears existing bits" "3" "$(run R.CLEARBITS k3 1 3 5 99)"
+assert_eq "CLEARBITS default replies OK" "OK" "$(run R.CLEARBITS k3 1)"
+assert_eq "CLEARBITS COUNT replies count" "2" "$(run R.CLEARBITS k3 3 5 99 COUNT)"
 result=$(run R.GETINTARRAY k3)
 expected=$(printf "2\n4")
 assert_eq "CLEARBITS remaining values" "$expected" "$result"
-assert_eq "CLEARBITS on nonexistent key" "0" "$(run R.CLEARBITS nonexist 1 2)"
+assert_eq "CLEARBITS on nonexistent key is null" "" "$(run R.CLEARBITS nonexist 1 2)"
 
 # -------------------------------------------------------
 echo "--- CLEAR ---"
@@ -114,14 +114,19 @@ assert_eq "DELETEINTARRAY removes values" "$expected" "$result"
 
 # -------------------------------------------------------
 echo "--- RANGEINTARRAY ---"
+# start/end are 0-based POSITIONS in the sorted array (pagination), not values
 run R.SETINTARRAY k8 5 10 15 20 25 30 > /dev/null
-result=$(run R.RANGEINTARRAY k8 10 25)
+result=$(run R.RANGEINTARRAY k8 1 4)
 expected=$(printf "10\n15\n20\n25")
-assert_eq "RANGEINTARRAY returns range" "$expected" "$result"
+assert_eq "RANGEINTARRAY paginates by position" "$expected" "$result"
+result=$(run R.RANGEINTARRAY k8 4 100)
+expected=$(printf "25\n30")
+assert_eq "RANGEINTARRAY truncates at cardinality" "$expected" "$result"
 result=$(run R.RANGEINTARRAY k8 100 200)
-assert_eq "RANGEINTARRAY empty range" "" "$result"
+assert_eq "RANGEINTARRAY past the end" "" "$result"
 result=$(run R.RANGEINTARRAY nonexist 0 100)
 assert_eq "RANGEINTARRAY nonexistent key" "" "$result"
+assert_contains "RANGEINTARRAY range cap" "range too large" "$(run R.RANGEINTARRAY k8 0 200000000)"
 
 # -------------------------------------------------------
 echo "--- SETBITARRAY / GETBITARRAY ---"
@@ -138,9 +143,9 @@ assert_eq "GETBITARRAY nonexistent is empty" "" "$result"
 # -------------------------------------------------------
 echo "--- SETRANGE ---"
 run R.SETRANGE k10 5 10 > /dev/null
-assert_eq "SETRANGE cardinality" "6" "$(run R.BITCOUNT k10)"
+assert_eq "SETRANGE cardinality" "5" "$(run R.BITCOUNT k10)"
 assert_eq "SETRANGE min" "5" "$(run R.MIN k10)"
-assert_eq "SETRANGE max" "10" "$(run R.MAX k10)"
+assert_eq "SETRANGE max (end-exclusive)" "9" "$(run R.MAX k10)"
 # Error case
 result=$(run R.SETRANGE k10err 10 5)
 assert_contains "SETRANGE end < start" "ERR" "$result"
@@ -187,8 +192,9 @@ run R.SETINTARRAY ca 1 2 3 4 5 > /dev/null
 run R.SETINTARRAY cb 2 3 > /dev/null
 run R.SETINTARRAY cc 1 2 3 4 5 > /dev/null
 run R.SETINTARRAY cd 99 > /dev/null
-assert_eq "CONTAINS NONE (overlap)" "1" "$(run R.CONTAINS ca cb)"
-assert_eq "CONTAINS NONE (no overlap)" "0" "$(run R.CONTAINS ca cd)"
+assert_eq "CONTAINS default (overlap)" "1" "$(run R.CONTAINS ca cb)"
+assert_eq "CONTAINS default (no overlap)" "0" "$(run R.CONTAINS ca cd)"
+assert_contains "CONTAINS explicit NONE rejected" "invalid mode" "$(run R.CONTAINS ca cb NONE)"
 assert_eq "CONTAINS ALL (subset)" "1" "$(run R.CONTAINS ca cb ALL)"
 assert_eq "CONTAINS ALL (not subset)" "0" "$(run R.CONTAINS cb ca ALL)"
 assert_eq "CONTAINS ALL_STRICT (proper subset)" "1" "$(run R.CONTAINS ca cb ALL_STRICT)"
@@ -460,6 +466,14 @@ run R.BITOP NOT notow missingkey > /dev/null
 assert_eq "NOT overwrites existing dest with empty result" "0" "$(run R.BITCOUNT notow)"
 
 # -------------------------------------------------------
+echo "--- upstream parity: BITOP arity, SETRANGE exclusivity, CLEARBITS ---"
+assert_contains "variadic BITOP needs two sources" "wrong number" "$(run R.BITOP AND ssdest ssa)"
+run R.SETRANGE sre 5 8 > /dev/null
+result=$(run R.GETINTARRAY sre)
+expected=$(printf "5\n6\n7")
+assert_eq "SETRANGE is end-exclusive" "$expected" "$result"
+
+# -------------------------------------------------------
 echo "--- BITOP getkeys (cluster routing, v1.7.3) ---"
 result=$(run COMMAND GETKEYS R.BITOP NOT gd gs 100)
 expected=$(printf "gd\ngs")
@@ -479,11 +493,11 @@ assert_contains "R64 BITOP invalid op is an error" "syntax error" "$(run R64.BIT
 # -------------------------------------------------------
 echo "--- CLEARBITS duplicate offsets (v1.7.4) ---"
 run R.SETINTARRAY dupck 5 7 > /dev/null
-assert_eq "CLEARBITS duplicate offsets count once" "1" "$(run R.CLEARBITS dupck 5 5 5)"
+assert_eq "CLEARBITS duplicate offsets count once" "1" "$(run R.CLEARBITS dupck 5 5 5 COUNT)"
 result=$(run R.GETINTARRAY dupck)
 assert_eq "CLEARBITS duplicates leave other bits" "7" "$result"
 run R64.SETINTARRAY dupck64 5 7 > /dev/null
-assert_eq "R64 CLEARBITS duplicate offsets count once" "1" "$(run R64.CLEARBITS dupck64 5 5 5)"
+assert_eq "R64 CLEARBITS duplicate offsets count once" "1" "$(run R64.CLEARBITS dupck64 5 5 5 COUNT)"
 
 # -------------------------------------------------------
 echo "--- DELETEINTARRAY duplicate deletes of last value (v1.7.4) ---"
@@ -531,10 +545,21 @@ assert_contains "GETBITARRAY huge max is an error" "range too large" "$(run R.GE
 assert_eq "GETBITARRAY server alive after huge max" "PONG" "$(run PING)"
 
 # -------------------------------------------------------
+echo "--- COPY on module keys ---"
+run R.SETINTARRAY cpk 1 2 3 > /dev/null
+assert_eq "COPY module key" "1" "$(run COPY cpk cpk2)"
+assert_eq "COPY result equal" "1" "$(run R.CONTAINS cpk cpk2 EQ)"
+run R.SETBIT cpk2 99 1 > /dev/null
+assert_eq "COPY is deep (independent)" "0" "$(run R.GETBIT cpk 99)"
+run R64.SETINTARRAY cpk64 5 5000000000 > /dev/null
+assert_eq "COPY r64 module key" "1" "$(run COPY cpk64 cpk64b)"
+assert_eq "COPY r64 result equal" "1" "$(run R64.CONTAINS cpk64 cpk64b EQ)"
+
+# -------------------------------------------------------
 echo "--- R64.OPTIMIZE (roaring 0.11.4+) ---"
 run R64.SETRANGE optr64 0 100000 > /dev/null
 assert_eq "R64 OPTIMIZE returns OK" "OK" "$(run R64.OPTIMIZE optr64)"
-assert_eq "R64 OPTIMIZE preserves data" "100001" "$(run R64.BITCOUNT optr64)"
+assert_eq "R64 OPTIMIZE preserves data" "100000" "$(run R64.BITCOUNT optr64)"
 
 echo "=== SYSTEMATIC ERROR COVERAGE ==="
 run FLUSHALL > /dev/null
@@ -580,7 +605,7 @@ for prefix in R R64; do
     "$prefix.CONTAINS plainstr plainstr"
     "$prefix.JACCARD plainstr plainstr"
     "$prefix.DIFF wtdest plainstr plainstr"
-    "$prefix.BITOP AND wtdest plainstr"
+    "$prefix.BITOP AND wtdest plainstr plainstr"
     "$prefix.BITOP NOT wtdest plainstr"
   )
   for call in "${WRONGTYPE_CALLS[@]}"; do

@@ -122,9 +122,11 @@ pub fn handle_getbits<T: RoaringType>(
         .collect::<Result<_, _>>()?;
 
     let key = ctx.open_key(&args[1]);
+    // A missing key replies an empty array (redis-roaring semantics), not
+    // a zero per offset.
     let results = match key.get_value::<T>(vtype)? {
         Some(bitmap) => bitmap.contains_many(&offsets),
-        None => vec![false; offsets.len()],
+        None => Vec::new(),
     };
 
     Ok(ValkeyValue::Array(
@@ -146,7 +148,16 @@ pub fn handle_clearbits<T: RoaringType>(
     if args.len() < 3 {
         return Err(ValkeyError::WrongArity);
     }
-    let offsets: Vec<T::Value> = args[2..]
+    // A trailing literal COUNT switches the reply from OK to the number of
+    // bits actually cleared (redis-roaring semantics).
+    let mut offset_args = &args[2..];
+    let count_mode = offset_args
+        .last()
+        .is_some_and(|a| a.to_string_lossy() == "COUNT");
+    if count_mode {
+        offset_args = &offset_args[..offset_args.len() - 1];
+    }
+    let offsets: Vec<T::Value> = offset_args
         .iter()
         .map(|a| parse_value::<T>(a, "offset"))
         .collect::<Result<_, _>>()?;
@@ -156,9 +167,13 @@ pub fn handle_clearbits<T: RoaringType>(
         Some(bitmap) => {
             let count = bitmap.remove_many_counted(&offsets);
             ctx.replicate_verbatim();
-            Ok(ValkeyValue::Integer(count as i64))
+            if count_mode {
+                Ok(ValkeyValue::Integer(count as i64))
+            } else {
+                Ok(ValkeyValue::SimpleStringStatic("OK"))
+            }
         }
-        None => Ok(ValkeyValue::Integer(0)),
+        None => Ok(ValkeyValue::Null),
     }
 }
 
@@ -292,19 +307,28 @@ pub fn handle_rangeintarray<T: RoaringType>(
     let start = parse_value::<T>(&args[2], "start")?;
     let end = parse_value::<T>(&args[3], "end")?;
 
-    // Inverted range replies empty (upstream parity). Must be checked here:
-    // roaring's range() panics on start > end, which would abort the server.
+    // start/end are 0-based POSITIONS in the sorted value array (pagination),
+    // matching redis-roaring: elements at indexes [start, end], truncated at
+    // the cardinality. An inverted range replies empty.
+    let start = T::value_to_i64(start) as u64;
+    let end = T::value_to_i64(end) as u64;
     if start > end {
         return Ok(ValkeyValue::Array(vec![]));
+    }
+    if end - start + 1 > MAX_RANGE_SIZE {
+        return Err(ValkeyError::Str(ERR_RANGE_TOO_LARGE));
     }
 
     let key = ctx.open_key(&args[1]);
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
-            let arr: Vec<ValkeyValue> = bitmap
-                .iter_range(start, end)
-                .map(|v| value_reply::<T>(v))
-                .collect();
+            let mut arr = Vec::new();
+            for i in start..=end {
+                match bitmap.select(i) {
+                    Some(v) => arr.push(value_reply::<T>(v)),
+                    None => break,
+                }
+            }
             Ok(ValkeyValue::Array(arr))
         }
         None => Ok(ValkeyValue::Array(vec![])),
@@ -381,7 +405,8 @@ pub fn handle_setrange<T: RoaringType>(
 
     let key = ctx.open_key_writable(&args[1]);
     let bitmap = get_or_create::<T>(&key, vtype)?;
-    bitmap.insert_range_inclusive(start, end);
+    // End-exclusive [start, end), matching redis-roaring / CRoaring add_range.
+    bitmap.insert_range_exclusive(start, end);
     ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
@@ -557,7 +582,9 @@ pub fn handle_contains<T: RoaringType>(
     };
 
     let result = match mode.as_str() {
-        "NONE" => !b1.is_disjoint(b2),
+        // "NONE" is the implicit default only; upstream rejects it as an
+        // explicit token, so an accepted literal NONE would be a divergence.
+        "NONE" if args.len() == 3 => !b1.is_disjoint(b2),
         "ALL" => b2.is_subset(b1),
         "ALL_STRICT" => b2.is_subset(b1) && b1 != b2,
         "EQ" => b1 == b2,

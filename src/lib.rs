@@ -55,7 +55,7 @@ pub static BITMAP32_TYPE: ValkeyType = ValkeyType::new(
         aux_save_triggers: 0,
         free_effort: None,
         unlink: None,
-        copy: None,
+        copy: Some(bitmap32_copy),
         defrag: None,
         copy2: None,
         free_effort2: None,
@@ -93,6 +93,15 @@ unsafe extern "C" fn bitmap32_mem_usage(value: *const c_void) -> usize {
     bm.serialized_size()
 }
 
+unsafe extern "C" fn bitmap32_copy(
+    _fromkey: *mut raw::RedisModuleString,
+    _tokey: *mut raw::RedisModuleString,
+    value: *const c_void,
+) -> *mut c_void {
+    let bm = &*(value as *const RoaringBitmap);
+    Box::into_raw(Box::new(bm.clone())) as *mut c_void
+}
+
 // ============================================================
 // 64-bit type registration
 // ============================================================
@@ -114,7 +123,7 @@ pub static BITMAP64_TYPE: ValkeyType = ValkeyType::new(
         aux_save_triggers: 0,
         free_effort: None,
         unlink: None,
-        copy: None,
+        copy: Some(bitmap64_copy),
         defrag: None,
         copy2: None,
         free_effort2: None,
@@ -150,6 +159,15 @@ unsafe extern "C" fn bitmap64_free(value: *mut c_void) {
 unsafe extern "C" fn bitmap64_mem_usage(value: *const c_void) -> usize {
     let bm = &*(value as *const RoaringTreemap);
     bm.serialized_size()
+}
+
+unsafe extern "C" fn bitmap64_copy(
+    _fromkey: *mut raw::RedisModuleString,
+    _tokey: *mut raw::RedisModuleString,
+    value: *const c_void,
+) -> *mut c_void {
+    let bm = &*(value as *const RoaringTreemap);
+    Box::into_raw(Box::new(bm.clone())) as *mut c_void
 }
 
 // ============================================================
