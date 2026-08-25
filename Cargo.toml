@@ -8,7 +8,10 @@ rust-version = "1.90.0"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-valkey-module = "0.1"
+# use-redismodule-api: initialize via RedisModule_Init only. Valkey registers the
+# RedisModule_* API names for compatibility, while Redis lacks the ValkeyModule_*
+# names — without this flag the default init path segfaults under Redis at load.
+valkey-module = { version = "0.1", features = ["use-redismodule-api"] }
 roaring = "0.11.5"
 
 [dev-dependencies]

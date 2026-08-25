@@ -9,10 +9,11 @@ Roaring Bitmaps for [Valkey](https://valkey.io/). **[Documentation →](https://
 
 [Roaring Bitmaps](https://roaringbitmap.org/) are compressed bitmap data structures that outperform plain bitmaps on both memory and speed for sparse or clustered integer sets. This module adds them to Valkey as native types, exposed through **51 commands** across 32-bit (`R.*`) and 64-bit (`R64.*`) variants — including binary export/import in the [CRoaring portable format](https://github.com/RoaringBitmap/CRoaring), so bitmaps can move between Valkey and any service that speaks the format (Java, Go, Python, C++, Rust) without intermediate integer arrays.
 
-Built in Rust on the official [valkey-module](https://crates.io/crates/valkey-module) SDK and the [roaring](https://crates.io/crates/roaring) crate.
+Built in Rust on the official [valkey-module](https://crates.io/crates/valkey-module) SDK and the [roaring](https://crates.io/crates/roaring) crate. The module is compatible with both **Valkey** and **Redis**: it initializes through the RedisModule API, which both servers expose, and loads cleanly on Valkey 8.1+ as well as Redis 7.4 and 8.
 
 ## Features
 
+- **Valkey and Redis compatible** — one `.so` loads on Valkey 8.1+ and Redis 7.4/8, with full functionality and RDB persistence on both
 - **Two value ranges** — 32-bit (`R.*`, values 0 to 2³²−1) and 64-bit (`R64.*`, values 0 to 2⁶⁴−1) bitmap types with identical command semantics
 - **Binary export/import** — `R.EXPORT` / `R.IMPORT` serialize to the CRoaring portable format for efficient cross-service transfer
 - **8 bitwise operations** — AND, OR, XOR, NOT, ANDOR, DIFF, DIFF1, ONE, cluster-aware key reporting included
@@ -30,6 +31,7 @@ Where redis-roaring wraps the CRoaring C library as a Redis module, valkey-roari
 | Requirement | Version |
 |-------------|---------|
 | Valkey      | 8.1+    |
+| Redis (alternative to Valkey) | 7.4+ |
 | Rust (build)| 1.90+   |
 | Docker      | 20.10+ (optional) |
 
