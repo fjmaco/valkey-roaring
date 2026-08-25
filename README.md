@@ -145,7 +145,15 @@ All BITOP operations return the cardinality of the result.
 
 The binary output of `R.EXPORT` is compatible with any [CRoaring-compatible library](#croaring-compatible-libraries) (Java, Go, Python, C++, Rust). This is the recommended way to transfer bitmaps between services.
 
-Binary data must be passed via Lua or a client library (`valkey-cli` drops null bytes):
+From a shell, use `valkey-cli`'s raw output and `-x` (both are binary-safe;
+pasting binary as a command argument is not):
+
+```bash
+valkey-cli R.EXPORT source > bitmap.bin        # raw reply redirected to a file
+valkey-cli -x R.IMPORT destination < bitmap.bin  # -x passes stdin as the last arg
+```
+
+From Lua:
 
 ```lua
 local data = redis.call('R.EXPORT', 'source')
@@ -260,11 +268,12 @@ fn handle_setbit<T: RoaringType>(ctx, args, vtype) -> ValkeyResult { ... }
 ["R64.SETBIT", r64_setbit, ...]   // T = RoaringTreemap (u64)
 ```
 
-### Persistence
+### Persistence and Replication
 
 - **RDB:** Bitmaps serialize via the CRoaring portable binary format. Data survives `BGSAVE` and server restarts.
+- **Replication:** Every write command propagates verbatim to replicas and to the AOF command stream.
+- **AOF:** Supported with the default configuration (`aof-use-rdb-preamble yes`): incremental writes reach the AOF through verbatim propagation, and rewrites use the RDB serialization as the base. The legacy non-preamble AOF mode is not supported (the Valkey Rust SDK does not expose the varargs `EmitAOF` C function needed for its per-type rewrite callback).
 - **Registered type names:** `vrroaring` (32-bit), `vroarng64` (64-bit).
-- **AOF:** Not currently supported (the Valkey Rust SDK does not expose the varargs `EmitAOF` C function).
 
 ### Memory Management
 
@@ -272,7 +281,7 @@ The module sets Rust's global allocator to `ValkeyAlloc`, routing all allocation
 
 ## Tests
 
-Three layers, all run by CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request.
+Three layers, all run by CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request, alongside `rustfmt`/`clippy` gates and a unit-layer coverage report. A [scheduled workflow](.github/workflows/benchmark.yml) refreshes the benchmark table below weekly. See [CONTRIBUTING.md](CONTRIBUTING.md) for running the gates locally.
 
 **Unit and property tests** (no server needed) — 39 tests covering every
 hand-written algorithm:
@@ -289,7 +298,7 @@ cargo test
 - Serialization round-trips, plus 800+ corrupted/truncated/garbage inputs fed
   through the `R.IMPORT` deserialization path asserting it never panics
 
-**Integration suite** — 265 assertions against a live Valkey instance:
+**Integration suite** — 272 assertions against a live Valkey instance:
 
 ```bash
 # From the repository root (requires running docker compose)
@@ -301,6 +310,8 @@ bash tests/integration.sh
 - CONTAINS with all 4 modes (NONE, ALL, ALL_STRICT, EQ)
 - EXPORT/IMPORT binary round-trip via Lua
 - RDB persistence across server restart
+- Replication: module writes verified on a live replica
+- AOF: replay after restart and rewrite via the RDB preamble
 - Dynamic GETKEYS, `BITOP NOT ... last`, duplicate-offset and BITPOS edge cases
 - Systematic error coverage: wrong-arity for all 51 commands, WRONGTYPE for
   every key command against a mistyped key, semantic errors (missing keys,
@@ -380,6 +391,6 @@ The binary format produced by `R.EXPORT` / `R.IMPORT` is the standard CRoaring p
 
 ## Known Limitations
 
-- **AOF rewrite** not supported (Valkey Rust SDK limitation)
-- **`R64.SETFULL`** allocates the full u64 range, which is impractical for real workloads
-- **`R.EXPORT` / `R.IMPORT`** require a client library or Lua — `valkey-cli` drops null bytes from binary data
+- **Legacy AOF mode**: with `aof-use-rdb-preamble no` (non-default), AOF rewrites cannot include module data — the Valkey Rust SDK does not expose `EmitAOF`. The default preamble mode is fully supported.
+- **`R64.SETFULL`** materializes containers for the entire u64 range, which exhausts memory long before completing — inherent to an eager roaring representation (the C module has the same behavior). Avoid it; use `R64.SETRANGE` over the range you actually need.
+- **`R.EXPORT` / `R.IMPORT`** binaries cannot be pasted as command arguments; use `valkey-cli -x` / raw output redirection, Lua, or a client library (see [Export / Import](#export--import)).

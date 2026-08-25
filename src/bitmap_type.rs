@@ -6,11 +6,7 @@ use std::io;
 /// Trait abstracting the common interface of RoaringBitmap and RoaringTreemap.
 /// Each command handler is generic over this trait so it's written once, registered twice.
 pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
-    type Value: Copy
-        + Ord
-        + fmt::Display
-        + TryFrom<u64>
-        + 'static;
+    type Value: Copy + Ord + fmt::Display + TryFrom<u64> + 'static;
 
     /// Convert a value to i64 for Valkey replies. Values > i64::MAX become i64::MAX.
     fn value_to_i64(v: Self::Value) -> i64;
@@ -79,7 +75,11 @@ pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
 
     // -- Iterator --
     fn iter_values(&self) -> Box<dyn Iterator<Item = Self::Value> + '_>;
-    fn iter_range(&self, start: Self::Value, end: Self::Value) -> Box<dyn Iterator<Item = Self::Value> + '_>;
+    fn iter_range(
+        &self,
+        start: Self::Value,
+        end: Self::Value,
+    ) -> Box<dyn Iterator<Item = Self::Value> + '_>;
 
     // -- Bit array --
     fn from_bit_array(bits: &[u8]) -> Self;

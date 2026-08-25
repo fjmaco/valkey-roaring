@@ -201,7 +201,11 @@ impl RoaringType for RoaringTreemap {
 
     fn iter_range(&self, start: u64, end: u64) -> Box<dyn Iterator<Item = u64> + '_> {
         // RoaringTreemap has no range() method; filter the iterator
-        Box::new(self.iter().skip_while(move |&v| v < start).take_while(move |&v| v <= end))
+        Box::new(
+            self.iter()
+                .skip_while(move |&v| v < start)
+                .take_while(move |&v| v <= end),
+        )
     }
 
     fn from_bit_array(bits: &[u8]) -> Self {
@@ -403,7 +407,10 @@ mod delegation_tests {
         RoaringType::remove_many(&mut b, &[1, 9]);
         assert!(!RoaringType::contains(&b, 1));
         assert_eq!(RoaringType::insert_range_inclusive(&mut b, 10, 12), 3);
-        assert_eq!(RoaringType::iter_values(&b).count() as u64, RoaringType::len(&b));
+        assert_eq!(
+            RoaringType::iter_values(&b).count() as u64,
+            RoaringType::len(&b)
+        );
 
         let other = bm(&[2, 100]);
         assert!(!RoaringType::is_disjoint(&b, &other));
@@ -445,7 +452,10 @@ mod delegation_tests {
         let b = RoaringTreemap::from_bit_array(b"0011");
         assert_eq!(b, bm(&[2, 3]));
         assert_eq!(RoaringType::to_bit_array(&b), b"0011".to_vec());
-        assert_eq!(RoaringType::to_bit_array(&RoaringTreemap::new()), Vec::<u8>::new());
+        assert_eq!(
+            RoaringType::to_bit_array(&RoaringTreemap::new()),
+            Vec::<u8>::new()
+        );
     }
 
     #[test]

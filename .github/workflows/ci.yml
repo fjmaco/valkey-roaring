@@ -19,8 +19,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Format check
+        run: cargo fmt --check
+
       - name: Build module
         run: cargo build --release --locked
+
+      - name: Clippy
+        run: cargo clippy --release --all-targets --locked -- -D warnings
 
       - name: Unit and property tests
         run: cargo test --release --locked
@@ -60,3 +66,31 @@ jobs:
       - name: Server logs on failure
         if: failure()
         run: docker compose logs
+
+  coverage:
+    name: Unit-layer coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install libclang (bindgen dependency)
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Coverage report
+        run: cargo llvm-cov --release --locked --lcov --output-path lcov.info
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
+      # To publish to Codecov/Coveralls, add the upload action with the repo token here.

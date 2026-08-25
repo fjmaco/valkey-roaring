@@ -101,6 +101,7 @@ pub fn handle_bitop<T: RoaringType>(
     let cardinality = result.len() as i64;
     let dest = ctx.open_key_writable(&args[2]);
     dest.set_value(vtype, result)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::Integer(cardinality))
 }
@@ -140,6 +141,7 @@ fn handle_bitop_not<T: RoaringType>(
     let cardinality = result.len() as i64;
     let dest = ctx.open_key_writable(&args[2]);
     dest.set_value(vtype, result)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::Integer(cardinality))
 }
@@ -308,8 +310,7 @@ mod tests {
                 .map(|s| build::<T>(&s.iter().copied().collect::<Vec<_>>()))
                 .collect();
             let result = run_op(op, sources);
-            let expected =
-                build::<T>(&reference(op, sets).into_iter().collect::<Vec<_>>());
+            let expected = build::<T>(&reference(op, sets).into_iter().collect::<Vec<_>>());
             assert_eq!(result, expected, "op {} on sources {:?}", op, sets);
         }
     }
@@ -333,12 +334,10 @@ mod tests {
     #[test]
     fn bitop_one_known_answer() {
         // {1,2} {2,3} {3,4}: 1 and 4 appear exactly once; 2 and 3 twice.
-        let sources: Vec<RoaringBitmap> =
-            vec![build(&[1, 2]), build(&[2, 3]), build(&[3, 4])];
+        let sources: Vec<RoaringBitmap> = vec![build(&[1, 2]), build(&[2, 3]), build(&[3, 4])];
         assert_eq!(op_one(sources), build::<RoaringBitmap>(&[1, 4]));
         // A bit in all three sources is not "exactly one".
-        let sources: Vec<RoaringBitmap> =
-            vec![build(&[7, 1]), build(&[7, 2]), build(&[7, 3])];
+        let sources: Vec<RoaringBitmap> = vec![build(&[7, 1]), build(&[7, 2]), build(&[7, 3])];
         assert_eq!(op_one(sources), build::<RoaringBitmap>(&[1, 2, 3]));
     }
 

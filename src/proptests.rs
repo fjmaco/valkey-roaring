@@ -17,7 +17,7 @@ fn random_bitmap64(state: &mut u64, max_card: u64) -> RoaringTreemap {
         .map(|_| {
             // Mix small values and values above the u32 range.
             let v = xorshift(state);
-            if v % 3 == 0 {
+            if v.is_multiple_of(3) {
                 v
             } else {
                 v % 100_000
@@ -74,7 +74,12 @@ fn deserialize_malformed_bytes_never_panics() {
             let _ = <RoaringBitmap as RoaringType>::deserialize_from(Cursor::new(&cloned[..]));
             let _ = <RoaringTreemap as RoaringType>::deserialize_from(Cursor::new(&cloned[..]));
         });
-        assert!(result.is_ok(), "deserialize panicked on {}: {:?}", what, bytes);
+        assert!(
+            result.is_ok(),
+            "deserialize panicked on {}: {:?}",
+            what,
+            bytes
+        );
     };
 
     // Pure garbage of various lengths.

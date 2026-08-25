@@ -608,6 +608,56 @@ assert_contains "SETBIT offset out of 32-bit range" "out of range" "$(run R.SETB
 assert_contains "CONTAINS invalid mode" "invalid mode" "$(run R.CONTAINS wtsrc wtsrc BOGUS)"
 assert_contains "SETRANGE inverted range" "must be >= start" "$(run R.SETRANGE rangekey 5 2)"
 
+echo "=== REPLICATION PROPAGATION ==="
+run FLUSHALL > /dev/null
+PRIMARY_CID=$(docker compose ps -q valkey)
+NET=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$PRIMARY_CID")
+IMG=$(docker inspect -f '{{.Config.Image}}' "$PRIMARY_CID")
+docker rm -f vr-test-replica > /dev/null 2>&1 || true
+docker run -d --rm --name vr-test-replica --network "$NET" "$IMG" \
+  valkey-server --loadmodule /usr/lib/valkey/modules/libvalkey_roaring.so \
+  --replicaof valkey 6379 > /dev/null
+RCLI="docker exec vr-test-replica valkey-cli"
+for _ in $(seq 1 30); do
+  if $RCLI INFO replication 2>/dev/null | grep -q "master_link_status:up"; then break; fi
+  sleep 1
+done
+run R.SETBIT repl32 42 1 > /dev/null
+run R64.SETINTARRAY repl64 5 6 7 > /dev/null
+run R.BITOP NOT repldest repl32 > /dev/null
+run R.SETINTARRAY repldel 1 2 3 > /dev/null
+run R.DELETEINTARRAY repldel 2 > /dev/null
+sleep 2
+assert_eq "replica got R.SETBIT" "1" "$($RCLI R.GETBIT repl32 42)"
+assert_eq "replica got R64.SETINTARRAY" "3" "$($RCLI R64.BITCOUNT repl64)"
+assert_eq "replica got BITOP dest" "42" "$($RCLI R.BITCOUNT repldest)"
+result=$($RCLI R.GETINTARRAY repldel)
+expected=$(printf "1\n3")
+assert_eq "replica got DELETEINTARRAY effect" "$expected" "$result"
+docker rm -f vr-test-replica > /dev/null 2>&1 || true
+
+# -------------------------------------------------------
+echo "=== AOF PERSISTENCE ==="
+docker rm -f vr-test-aof > /dev/null 2>&1 || true
+docker run -d --name vr-test-aof --network "$NET" "$IMG" \
+  valkey-server --loadmodule /usr/lib/valkey/modules/libvalkey_roaring.so \
+  --appendonly yes > /dev/null
+ACLI="docker exec vr-test-aof valkey-cli"
+for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
+$ACLI R.SETBIT aofk 7 1 > /dev/null
+$ACLI R64.SETBIT aofk64 5000000000 1 > /dev/null
+sleep 1
+docker restart vr-test-aof > /dev/null
+for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
+assert_eq "AOF replay restores module write" "1" "$($ACLI R.GETBIT aofk 7)"
+assert_eq "AOF replay restores R64 write" "1" "$($ACLI R64.GETBIT aofk64 5000000000)"
+$ACLI BGREWRITEAOF > /dev/null
+sleep 2
+docker restart vr-test-aof > /dev/null
+for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
+assert_eq "AOF rewrite (RDB preamble) preserves data" "1" "$($ACLI R.GETBIT aofk 7)"
+docker rm -f vr-test-aof > /dev/null 2>&1 || true
+
 # -------------------------------------------------------
 echo "=== RDB PERSISTENCE ==="
 run FLUSHALL > /dev/null

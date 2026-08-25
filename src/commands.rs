@@ -25,7 +25,7 @@ fn require_existing<'a, T: RoaringType>(
     vtype: &ValkeyType,
 ) -> Result<&'a T, ValkeyError> {
     key.get_value::<T>(vtype)?
-        .ok_or_else(|| ValkeyError::Str(ERR_KEY_NOT_FOUND))
+        .ok_or(ValkeyError::Str(ERR_KEY_NOT_FOUND))
 }
 
 // ============================================================
@@ -37,11 +37,13 @@ pub(crate) fn parse_value<T: RoaringType>(
 ) -> Result<T::Value, ValkeyError> {
     let s = arg.to_string_lossy();
     let val: u64 = s.parse().map_err(|_| {
-        ValkeyError::String(format!("ERR invalid {}: must be a non-negative integer", name))
+        ValkeyError::String(format!(
+            "ERR invalid {}: must be a non-negative integer",
+            name
+        ))
     })?;
-    T::Value::try_from(val).map_err(|_| {
-        ValkeyError::String(format!("ERR invalid {}: value out of range", name))
-    })
+    T::Value::try_from(val)
+        .map_err(|_| ValkeyError::String(format!("ERR invalid {}: value out of range", name)))
 }
 
 /// Reply with a bitmap value. Values that fit i64 are integer replies; larger
@@ -78,6 +80,7 @@ pub fn handle_setbit<T: RoaringType>(
     } else {
         bitmap.remove(offset);
     }
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::Integer(previous as i64))
 }
@@ -152,6 +155,7 @@ pub fn handle_clearbits<T: RoaringType>(
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
             let count = bitmap.remove_many_counted(&offsets);
+            ctx.replicate_verbatim();
             Ok(ValkeyValue::Integer(count as i64))
         }
         None => Ok(ValkeyValue::Integer(0)),
@@ -174,6 +178,7 @@ pub fn handle_clear<T: RoaringType>(
         Some(bitmap) => {
             let card = bitmap.len();
             bitmap.clear();
+            ctx.replicate_verbatim();
             Ok(ValkeyValue::Integer(card as i64))
         }
         None => Ok(ValkeyValue::Null),
@@ -199,6 +204,7 @@ pub fn handle_setintarray<T: RoaringType>(
     let key = ctx.open_key_writable(&args[1]);
     let bm = T::from_values(&vals);
     key.set_value(vtype, bm)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -217,10 +223,7 @@ pub fn handle_getintarray<T: RoaringType>(
     let key = ctx.open_key(&args[1]);
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
-            let arr: Vec<ValkeyValue> = bitmap
-                .iter_values()
-                .map(|v| value_reply::<T>(v))
-                .collect();
+            let arr: Vec<ValkeyValue> = bitmap.iter_values().map(|v| value_reply::<T>(v)).collect();
             Ok(ValkeyValue::Array(arr))
         }
         None => Ok(ValkeyValue::Array(vec![])),
@@ -246,6 +249,7 @@ pub fn handle_appendintarray<T: RoaringType>(
     let key = ctx.open_key_writable(&args[1]);
     let bitmap = get_or_create::<T>(&key, vtype)?;
     bitmap.insert_many(&vals);
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -269,6 +273,7 @@ pub fn handle_deleteintarray<T: RoaringType>(
     let key = ctx.open_key_writable(&args[1]);
     let bitmap = get_or_create::<T>(&key, vtype)?;
     bitmap.remove_many(&vals);
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -322,6 +327,7 @@ pub fn handle_setbitarray<T: RoaringType>(
 
     let key = ctx.open_key_writable(&args[1]);
     key.set_value(vtype, bm)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -376,6 +382,7 @@ pub fn handle_setrange<T: RoaringType>(
     let key = ctx.open_key_writable(&args[1]);
     let bitmap = get_or_create::<T>(&key, vtype)?;
     bitmap.insert_range_inclusive(start, end);
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -398,6 +405,7 @@ pub fn handle_setfull<T: RoaringType>(
 
     let bm = T::full();
     key.set_value(vtype, bm)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -518,6 +526,7 @@ pub fn handle_optimize<T: RoaringType>(
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
             bitmap.optimize();
+            ctx.replicate_verbatim();
             Ok(ValkeyValue::SimpleStringStatic("OK"))
         }
         None => Ok(ValkeyValue::SimpleStringStatic("OK")),
@@ -612,6 +621,7 @@ pub fn handle_diff<T: RoaringType>(
 
     let dest = ctx.open_key_writable(&args[1]);
     dest.set_value(vtype, result)?;
+    ctx.replicate_verbatim();
 
     Ok(ValkeyValue::SimpleStringStatic("OK"))
 }
@@ -669,6 +679,8 @@ pub fn handle_import<T: RoaringType>(
             key.set_value(vtype, new_bitmap)?;
         }
     }
+
+    ctx.replicate_verbatim();
 
     // Return cardinality after import
     let bitmap = key.get_value::<T>(vtype)?.unwrap();

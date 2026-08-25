@@ -7,7 +7,9 @@ use std::os::raw::c_void;
 use roaring::{RoaringBitmap, RoaringTreemap};
 use valkey_module::alloc::ValkeyAlloc;
 use valkey_module::native_types::ValkeyType;
-use valkey_module::{raw, valkey_module, Context, ValkeyResult, ValkeyString, ValkeyValue, ValkeyError};
+use valkey_module::{
+    raw, valkey_module, Context, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue,
+};
 
 mod bitmap32;
 mod bitmap64;
@@ -55,10 +57,7 @@ pub static BITMAP32_TYPE: ValkeyType = ValkeyType::new(
     },
 );
 
-unsafe extern "C" fn bitmap32_rdb_load(
-    rdb: *mut raw::RedisModuleIO,
-    _encver: i32,
-) -> *mut c_void {
+unsafe extern "C" fn bitmap32_rdb_load(rdb: *mut raw::RedisModuleIO, _encver: i32) -> *mut c_void {
     let data = match raw::load_string_buffer(rdb) {
         Ok(buf) => buf,
         Err(_) => return std::ptr::null_mut(),
@@ -117,10 +116,7 @@ pub static BITMAP64_TYPE: ValkeyType = ValkeyType::new(
     },
 );
 
-unsafe extern "C" fn bitmap64_rdb_load(
-    rdb: *mut raw::RedisModuleIO,
-    _encver: i32,
-) -> *mut c_void {
+unsafe extern "C" fn bitmap64_rdb_load(rdb: *mut raw::RedisModuleIO, _encver: i32) -> *mut c_void {
     let data = match raw::load_string_buffer(rdb) {
         Ok(buf) => buf,
         Err(_) => return std::ptr::null_mut(),
@@ -158,9 +154,7 @@ unsafe extern "C" fn bitmap64_mem_usage(value: *const c_void) -> usize {
 /// WRONGTYPE prefix, matching redis-roaring's replies.
 fn normalize_type_err(e: ValkeyError) -> ValkeyError {
     match e {
-        ValkeyError::Str(s) if s == "Existing key has wrong Valkey type" => {
-            ValkeyError::WrongType
-        }
+        ValkeyError::Str("Existing key has wrong Valkey type") => ValkeyError::WrongType,
         other => other,
     }
 }
@@ -221,40 +215,50 @@ fn r_getbits(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_getbits::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
 }
 fn r_clearbits(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_clearbits::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_clearbits::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_clear(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_clear::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
 }
 fn r_setintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_setintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_setintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_getintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_getintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_getintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_appendintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_appendintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_appendintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_deleteintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_deleteintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_deleteintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_rangeintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_rangeintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_rangeintarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_setbitarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_setbitarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_setbitarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_getbitarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_getbitarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_getbitarray::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_setrange(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_setrange::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_setrange::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_setfull(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_setfull::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
 }
 fn r_bitcount(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_bitcount::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_bitcount::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_bitpos(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_bitpos::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
@@ -266,10 +270,12 @@ fn r_max(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_max::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
 }
 fn r_optimize(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_optimize::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_optimize::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_contains(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_contains::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands::handle_contains::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_jaccard(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_jaccard::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
@@ -278,7 +284,8 @@ fn r_diff(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_diff::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
 }
 fn r_bitop(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands_bitop::handle_bitop::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
+    commands_bitop::handle_bitop::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r_export(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_export::<RoaringBitmap>(ctx, args, &BITMAP32_TYPE).map_err(normalize_type_err)
@@ -297,43 +304,55 @@ fn r64_getbit(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_getbit::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
 }
 fn r64_getbits(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_getbits::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_getbits::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_clearbits(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_clearbits::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_clearbits::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_clear(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_clear::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
 }
 fn r64_setintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_setintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_setintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_getintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_getintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_getintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_appendintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_appendintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_appendintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_deleteintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_deleteintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_deleteintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_rangeintarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_rangeintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_rangeintarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_setbitarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_setbitarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_setbitarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_getbitarray(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_getbitarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_getbitarray::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_setrange(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_setrange::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_setrange::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_setfull(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_setfull::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_setfull::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_bitcount(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_bitcount::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_bitcount::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_bitpos(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_bitpos::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
@@ -345,19 +364,23 @@ fn r64_max(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_max::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
 }
 fn r64_optimize(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_optimize::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_optimize::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_contains(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_contains::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_contains::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_jaccard(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands::handle_jaccard::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands::handle_jaccard::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_diff(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_diff::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
 }
 fn r64_bitop(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
-    commands_bitop::handle_bitop::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)
+    commands_bitop::handle_bitop::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE)
+        .map_err(normalize_type_err)
 }
 fn r64_export(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
     commands::handle_export::<RoaringTreemap>(ctx, args, &BITMAP64_TYPE).map_err(normalize_type_err)

@@ -314,7 +314,9 @@ mod tests {
         let mut state = 0x9E37_79B9_7F4A_7C15u64;
         for _ in 0..100 {
             let card = xorshift(&mut state) % 24;
-            let vals: Vec<u32> = (0..card).map(|_| (xorshift(&mut state) % 32) as u32).collect();
+            let vals: Vec<u32> = (0..card)
+                .map(|_| (xorshift(&mut state) % 32) as u32)
+                .collect();
             let b = bm(&vals);
             let absent: Vec<u32> = (0..64).filter(|v| !b.contains(*v)).collect();
             for (i, expected) in absent.iter().take(12).enumerate() {
@@ -397,7 +399,10 @@ mod delegation_tests {
 
     #[test]
     fn trait_delegation_smoke() {
-        assert_eq!(RoaringType::len(&<RoaringBitmap as RoaringType>::full()), 1u64 << 32);
+        assert_eq!(
+            RoaringType::len(&<RoaringBitmap as RoaringType>::full()),
+            1u64 << 32
+        );
         assert_eq!(RoaringBitmap::value_to_i64(7), 7);
         assert_eq!(RoaringBitmap::value_to_i64(u32::MAX), u32::MAX as i64);
 
@@ -411,8 +416,14 @@ mod delegation_tests {
         RoaringType::remove_many(&mut b, &[1, 9]);
         assert!(!RoaringType::contains(&b, 1));
         assert_eq!(RoaringType::insert_range_inclusive(&mut b, 10, 12), 3);
-        assert_eq!(RoaringType::iter_range(&b, 10, 11).collect::<Vec<_>>(), vec![10, 11]);
-        assert_eq!(RoaringType::iter_values(&b).count() as u64, RoaringType::len(&b));
+        assert_eq!(
+            RoaringType::iter_range(&b, 10, 11).collect::<Vec<_>>(),
+            vec![10, 11]
+        );
+        assert_eq!(
+            RoaringType::iter_values(&b).count() as u64,
+            RoaringType::len(&b)
+        );
 
         let other = bm(&[2, 100]);
         assert!(!RoaringType::is_disjoint(&b, &other));
