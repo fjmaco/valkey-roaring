@@ -1,12 +1,5 @@
 # R.EXPORT / R64.EXPORT
 
-::: tip valkey-roaring original
-`R.EXPORT` does not exist in redis-roaring — it is one of the two
-commands this module adds for raw-value interchange: the bitmap serializes
-as CRoaring-portable bytes so any service can consume it directly, without
-integer-array round-trips. See the [Export / Import guide](/guide/export-import).
-:::
-
 Serializes the bitmap to the CRoaring portable binary format.
 
 | | |
