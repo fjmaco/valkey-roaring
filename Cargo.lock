@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "valkey-roaring"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "roaring",
  "valkey-module",
