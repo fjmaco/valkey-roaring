@@ -62,8 +62,12 @@ jobs:
 
       # Keeps the Docker Hub repository page in sync: short description plus
       # the README as the full overview.
+      # Non-fatal: description updates need a token with Read/Write/Delete
+      # scope (or the account password); image publishing must stay green
+      # even when this is refused.
       - uses: peter-evans/dockerhub-description@v4
         if: steps.creds.outputs.ok == 'true'
+        continue-on-error: true
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
