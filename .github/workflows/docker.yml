@@ -59,3 +59,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Keeps the Docker Hub repository page in sync: short description plus
+      # the README as the full overview.
+      - uses: peter-evans/dockerhub-description@v4
+        if: steps.creds.outputs.ok == 'true'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ secrets.DOCKERHUB_USERNAME }}/valkey-roaring
+          short-description: >-
+            Roaring Bitmaps for Valkey: 51 commands, 32/64-bit,
+            CRoaring-portable binary export/import
+          readme-filepath: ./README.md
