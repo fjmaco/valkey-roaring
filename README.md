@@ -3,7 +3,7 @@
 [![CI](https://github.com/fjmaco/valkey-roaring/actions/workflows/ci.yml/badge.svg)](https://github.com/fjmaco/valkey-roaring/actions/workflows/ci.yml)
 [![Fuzz](https://github.com/fjmaco/valkey-roaring/actions/workflows/fuzz.yml/badge.svg)](https://github.com/fjmaco/valkey-roaring/actions/workflows/fuzz.yml)
 [![codecov](https://codecov.io/gh/fjmaco/valkey-roaring/graph/badge.svg)](https://codecov.io/gh/fjmaco/valkey-roaring)
-[![Docker](https://img.shields.io/docker/v/fjmaco/valkey-roaring?label=docker)](https://hub.docker.com/r/fjmaco/valkey-roaring)
+[![Docker Pulls](https://img.shields.io/docker/pulls/fjmaco/valkey-roaring?label=docker%20pulls)](https://hub.docker.com/r/fjmaco/valkey-roaring)
 
 Roaring Bitmaps for [Valkey](https://valkey.io/).
 
