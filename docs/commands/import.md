@@ -1,5 +1,12 @@
 # R.IMPORT / R64.IMPORT
 
+::: tip valkey-roaring original
+`R.IMPORT` does not exist in redis-roaring — it is one of the two
+commands this module adds for raw-value interchange: the bitmap deserializes
+as CRoaring-portable bytes so any service can consume it directly, without
+integer-array round-trips. See the [Export / Import guide](/guide/export-import).
+:::
+
 Deserializes a CRoaring-portable payload and OR-merges it into key.
 
 | | |
