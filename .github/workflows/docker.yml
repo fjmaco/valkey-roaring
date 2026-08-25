@@ -23,7 +23,7 @@ jobs:
             echo "Docker Hub secrets not configured — skipping publish." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.creds.outputs.ok == 'true'
 
       - uses: docker/setup-qemu-action@v3

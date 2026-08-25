@@ -17,7 +17,7 @@ jobs:
       matrix:
         target: [import_bytes, parity_ops, bitop_kernels]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install libclang (bindgen dependency)
         run: sudo apt-get update && sudo apt-get install -y libclang-dev

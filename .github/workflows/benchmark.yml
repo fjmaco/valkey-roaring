@@ -18,7 +18,7 @@ jobs:
       # With BENCHMARK_PUSH_TOKEN set (a fine-grained PAT with Contents write,
       # owned by a repo admin), the push bypasses branch protection; with the
       # default token the commit step below falls back to an artifact.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.BENCHMARK_PUSH_TOKEN || github.token }}
 
