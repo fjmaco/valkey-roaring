@@ -38,5 +38,5 @@ features:
     link: /guide/persistence-and-replication
   - icon: 🧪
     title: Battle-tested
-    details: Unit and property tests, fuzzing, a 283-assertion integration suite, and external validation against real datasets and reference implementations on every push.
+    details: Unit and property tests, fuzzing and a 283-assertion integration suite on every push, plus a separate end-to-end suite validating the running server against real datasets and reference implementations.
 ---
