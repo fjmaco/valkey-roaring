@@ -16,3 +16,11 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    # One PR for all of them. Ungrouped, a week like #7-#11 arrives as five
+    # PRs that each have to be reviewed and verified on their own, and a
+    # pipeline spread over several files — docs.yml uses four actions — is
+    # left half-updated between merges. #12 had to be opened by hand to undo
+    # exactly that.
+    groups:
+      github-actions:
+        patterns: ["*"]
