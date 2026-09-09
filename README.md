@@ -352,11 +352,25 @@ cargo +nightly fuzz run bitop_kernels   # BITOP kernels vs a naive reference
 **Performance benchmark** — see [Performance](#performance); CI runs a smoke
 subset on every push.
 
-**External validation harness** — [`testing/`](testing/) holds twelve
-end-to-end suites run on demand (`bash testing/run_all.sh`): real-dataset
-semantics against a reference model, CRoaring interop, differential runs
-against redis-roaring, replication, cluster, torture, and workflow
-contracts. See [testing/README.md](testing/README.md).
+**External validation** — twelve end-to-end suites live in a separate
+repository,
+[fjmaco/-valkey-roaring-testing](https://github.com/fjmaco/-valkey-roaring-testing):
+real-dataset semantics against a reference model, CRoaring interop,
+differential runs against redis-roaring, replication, cluster, torture, and
+workflow contracts. They are kept out of this tree deliberately — they
+validate the module the way an outside consumer would, through the wire
+protocol, the Docker image and the published binary format only, and share
+no code with it. That is also where new end-to-end tests belong.
+
+```bash
+git clone https://github.com/fjmaco/-valkey-roaring-testing.git valkey-roaring-testing
+cd valkey-roaring-testing && bash run_all.sh
+```
+
+The runner builds the module from a sibling `../valkey-roaring` checkout
+when one exists, so a working tree can be validated before it is pushed;
+otherwise it clones this repository. `VR_SOURCE=/path/to/checkout` and
+`VR_REF=<branch|tag>` select the source explicitly.
 
 ## Performance
 
