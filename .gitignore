@@ -38,11 +38,6 @@ copilot-instructions.md
 .DS_Store
 Thumbs.db
 
-# Validation harness artifacts (the harness itself is tracked)
-testing/.venv/
-testing/datasets/
-__pycache__/
-
 # Docs build artifacts
 docs/node_modules/
 docs/.vitepress/dist/
