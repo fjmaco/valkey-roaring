@@ -3,14 +3,54 @@ name: Docker
 # Publishes the module image to Docker Hub: `latest` from main, semver tags
 # from v* releases. Skips cleanly until the DOCKERHUB_USERNAME and
 # DOCKERHUB_TOKEN repository secrets are configured.
+#
+# The `pull_request` trigger exists only so changes to this file — in
+# practice, Dependabot action bumps — are exercised before they merge. The
+# publish job runs on main and tags, so without it a bump here would first
+# execute on the release it breaks.
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/docker.yml"
   workflow_dispatch:
 
 jobs:
+  # Same action stack as `publish`, with the registry legs removed: no
+  # credentials (Dependabot runs get a read-only token and no repository
+  # secrets) and no push. What it proves is that qemu/buildx/metadata and
+  # build-push-action still agree with this file and each other, and that
+  # the image builds. `docker/login-action` is only exercised on main.
+  validate:
+    name: Build image (no push)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: valkey-roaring
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Read-only: a pull_request token cannot write the GHA cache.
+          cache-from: type=gha
+
   publish:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Check Docker Hub credentials
@@ -59,4 +99,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
