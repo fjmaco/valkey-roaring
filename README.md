@@ -310,7 +310,7 @@ Every command runs inside a panic guard. If a bug in the module or in roaring-rs
 
 Three layers, all run by CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request, alongside `rustfmt`/`clippy` gates and a unit-layer coverage report. The [benchmark workflow](.github/workflows/benchmark.yml) refreshes the table below whenever performance-relevant code changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for running the gates locally.
 
-**Unit and property tests** (no server needed) — 93 tests covering every
+**Unit and property tests** (no server needed) — 95 tests covering every
 hand-written algorithm:
 
 ```bash
