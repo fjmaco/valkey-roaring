@@ -20,6 +20,11 @@ Every write command replicates verbatim to replicas. Replica-side state is
 byte-identical — validated by attaching a live replica under concurrent
 write load and comparing exported blobs for every key.
 
+A write replayed from the AOF or received from a primary is never refused
+by this server's limits: it was accepted where it first ran, so it applies
+even when `valkey-roaring.max-write-values` is set lower here (up to 2³⁸
+values) or memory is short (see [Configuration](/guide/configuration)).
+
 ## Upgrading from 1.1.1
 
 RDB files and DUMP payloads written by 1.1.1 load unchanged. Its AOF and

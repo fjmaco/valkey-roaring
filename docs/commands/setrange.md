@@ -22,7 +22,7 @@ Simple string `OK`.
 
 - End-exclusive, like CRoaring's `add_range`: `R.SETRANGE k 5 8` sets bits 5, 6, 7.
 - `end < start` is an error: `ERR invalid end: must be >= start` (R), `ERR invalid end: must >= start` (R64; the wording differs by width). `end == start` sets nothing (but creates the key).
-- One call may set at most 2³⁸ values; a wider R64 range is refused with `Roaring: range too large: maximum 274877906944 elements` (see [limits](/commands/#limits)).
+- One call may set at most `valkey-roaring.max-write-values` values, 2³⁸ by default; a wider range is refused with `Roaring: range too large: maximum 274877906944 elements` (or the configured value). With `maxmemory` set, a range whose estimated size would push used memory past it is refused with `OOM command not allowed when used memory > 'maxmemory'.` Either way nothing is created (see [limits](/commands/#limits)).
 
 ## Example
 

@@ -18,7 +18,7 @@ Bulk string of `0`/`1` characters; `"0"` for an existing empty key. A missing ke
 
 ## Notes
 
-- Refused with `Roaring: range too large: maximum 100000000 elements` when the maximum set bit is at or above 100,000,000 — the reply would be that many bytes. This includes an `R.SETFULL` key.
+- Refused with `Roaring: range too large: maximum 100000000 elements` when the maximum set bit is at or above `valkey-roaring.max-reply-elements` (100,000,000 by default; the refusal names the configured value) — the reply would be that many bytes. This includes an `R.SETFULL` key.
 
 ## Example
 

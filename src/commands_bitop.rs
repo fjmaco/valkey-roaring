@@ -14,6 +14,7 @@
 use crate::bitmap_type::RoaringType;
 use crate::commands::{check_type, from_aof_or_primary, key_changed, parse_value};
 use crate::error::*;
+use crate::limits::{check_memory, check_write_values, range_write_bytes};
 use crate::parse::c_str;
 use valkey_module::native_types::ValkeyType;
 use valkey_module::{Context, ValkeyError, ValkeyResult, ValkeyString, ValkeyValue};
@@ -125,9 +126,11 @@ pub fn handle_bitop<T: RoaringType>(
 /// Without an explicit `last` the universe ends at the source's max value; an
 /// explicit `last` below the source max is raised to it. A missing or empty
 /// source with no `last` stores an empty bitmap and replies 0; with `last` it
-/// stores the full range [0, last]. A universe of more than MAX_STORED_RANGE
-/// values (only reachable with 64-bit values) is refused before anything is
-/// built: complementing [0, 2^63] would allocate billions of containers.
+/// stores the full range [0, last]. A universe of more than max-write-values
+/// values (by default only reachable with 64-bit values) is refused before
+/// anything is built: complementing [0, 2^63] would allocate billions of
+/// containers. So is one whose estimated result would push memory past
+/// maxmemory (limits::check_memory).
 fn handle_bitop_not<T: RoaringType>(
     ctx: &Context,
     args: &[ValkeyString],
@@ -154,10 +157,12 @@ fn handle_bitop_not<T: RoaringType>(
         };
         match universe_max {
             None => T::new(),
-            Some(top) if T::value_to_u64(top) >= MAX_STORED_RANGE => {
-                return Err(ValkeyError::Str(ERR_STORED_RANGE_TOO_LARGE));
+            Some(top) => {
+                let top_u64 = T::value_to_u64(top);
+                check_write_values(ctx, top_u64.saturating_add(1))?;
+                check_memory(ctx, range_write_bytes(0, top_u64))?;
+                src.flip_inclusive(top)
             }
-            Some(top) => src.flip_inclusive(top),
         }
     };
     // No trim() here, unlike the other operations: a complement cannot

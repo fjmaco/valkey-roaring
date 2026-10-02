@@ -18,10 +18,10 @@ CI runs these gates on every PR — running them locally first saves a round tri
 ```bash
 cargo fmt --check
 cargo clippy --release --all-targets -- -D warnings
-cargo test --release              # 95 unit and property tests
+cargo test --release              # 107 unit and property tests
 
 docker compose up -d              # build + start Valkey with the module
-bash tests/integration.sh         # 432 assertions against the live server
+bash tests/integration.sh         # 496 assertions against the live server
 
 # optional, needs a nightly toolchain (CI runs these too):
 cargo +nightly fuzz run import_bytes -- -max_total_time=60
