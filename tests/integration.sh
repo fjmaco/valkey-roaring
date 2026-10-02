@@ -561,6 +561,121 @@ run R64.SETRANGE optr64 0 100000 > /dev/null
 assert_eq "R64 OPTIMIZE returns OK" "OK" "$(run R64.OPTIMIZE optr64)"
 assert_eq "R64 OPTIMIZE preserves data" "100000" "$(run R64.BITCOUNT optr64)"
 
+# -------------------------------------------------------
+echo "--- Streamed and paged replies on multi-container keys ---"
+# 300k values spread over five containers; pages deep into the key walk from
+# one select, and full replies are streamed element by element.
+run R.SETRANGE pg 0 100000 > /dev/null
+run R.SETRANGE pg 200000 400000 > /dev/null
+run R64.SETRANGE pg64 0 100000 > /dev/null
+run R64.SETRANGE pg64 200000 400000 > /dev/null
+for prefix in R R64; do
+  key=pg
+  if [ "$prefix" = R64 ]; then key=pg64; fi
+  expected=$(printf "99999\n200000\n200001")
+  assert_eq "$prefix RANGEINTARRAY page across a gap" "$expected" "$(run $prefix.RANGEINTARRAY $key 99999 100001)"
+  expected=$(printf "399998\n399999")
+  assert_eq "$prefix RANGEINTARRAY page truncated at the end" "$expected" "$(run $prefix.RANGEINTARRAY $key 299998 400000)"
+  assert_eq "$prefix RANGEINTARRAY page at cardinality" "" "$(run $prefix.RANGEINTARRAY $key 300000 300005)"
+  assert_eq "$prefix GETINTARRAY streams every value" "300000 399999" \
+    "$(run EVAL "local a = redis.call('$prefix.GETINTARRAY', KEYS[1]) return #a .. ' ' .. a[#a]" 1 $key)"
+  assert_eq "$prefix GETBITS streams one reply per offset" "1 0 1 0" \
+    "$(run $prefix.GETBITS $key 0 100000 399999 400000 | tr '\n' ' ' | sed 's/ $//')"
+  assert_eq "$prefix BITPOS 0 skips a long run" "100000" "$(run $prefix.BITPOS $key 0)"
+done
+
+# -------------------------------------------------------
+echo "--- Set operations: aliasing and memory ---"
+run R.SETINTARRAY al_a 1 2 > /dev/null
+run R.SETINTARRAY al_b 3 > /dev/null
+assert_eq "BITOP dest may be a source" "3" "$(run R.BITOP OR al_a al_a al_b)"
+assert_eq "BITOP aliased result" "$(printf "1\n2\n3")" "$(run R.GETINTARRAY al_a)"
+assert_eq "DIFF dest may be a source" "OK" "$(run R.DIFF al_a al_a al_b)"
+assert_eq "DIFF aliased result" "$(printf "1\n2")" "$(run R.GETINTARRAY al_a)"
+# A small AND of two large keys must not keep its inputs' capacity: 20k
+# values each over ~30 containers, overlapping in 200.
+# (Lua's unpack takes at most ~8000 values, so append in chunks.)
+build_lua="local t = {} for i = 1, 20000 do t[#t + 1] = i * 97 + ARGV[1] * ((i % 100 == 0) and 0 or 1)
+  if #t == 5000 then redis.call('R.APPENDINTARRAY', KEYS[1], unpack(t)) t = {} end end return 1"
+run EVAL "$build_lua" 1 big_a 0 > /dev/null
+run EVAL "$build_lua" 1 big_b 1 > /dev/null
+assert_eq "large AND sources built" "$(printf "20000\n20000")" "$(run R.BITCOUNT big_a; run R.BITCOUNT big_b)"
+assert_eq "AND of large keys" "200" "$(run R.BITOP AND and_small big_a big_b)"
+mem=$(run MEMORY USAGE and_small)
+assert_eq "small AND result is trimmed (MEMORY USAGE $mem < 10000)" "1" "$([ "$mem" -lt 10000 ] && echo 1 || echo 0)"
+
+# -------------------------------------------------------
+echo "--- EXPORT is canonical across histories ---"
+# {5,6,7}: run and array encodings are the same size, and SETRANGE builds a
+# run container while SETINTARRAY builds an array one.
+for prefix in R R64; do
+  result=$(run EVAL "
+redis.call('$prefix.SETRANGE', KEYS[1], 5, 8)
+redis.call('$prefix.SETINTARRAY', KEYS[2], 5, 6, 7)
+if redis.call('$prefix.EXPORT', KEYS[1]) == redis.call('$prefix.EXPORT', KEYS[2]) then return 1 end
+return 0" 2 canon_run_$prefix canon_arr_$prefix)
+  assert_eq "$prefix EXPORT identical for run- and array-built {5,6,7}" "1" "$result"
+done
+
+# -------------------------------------------------------
+echo "--- R64.IMPORT of a blob with an empty sub-bitmap ---"
+# {1} under high word 0 plus an empty sub-bitmap under 7 (the format allows
+# it): the key must still equal {1} built any other way.
+result=$(run EVAL "
+local blob = string.char(2,0,0,0,0,0,0,0, 0,0,0,0, 0x3A,0x30,0,0, 1,0,0,0, 0,0,0,0, 16,0,0,0, 1,0,
+  7,0,0,0, 0x3A,0x30,0,0, 0,0,0,0)
+redis.call('R64.IMPORT', KEYS[1], blob)
+redis.call('R64.SETINTARRAY', KEYS[2], 1)
+return {redis.call('R64.CONTAINS', KEYS[1], KEYS[2], 'EQ'), redis.call('R64.CONTAINS', KEYS[2], KEYS[1], 'ALL')}
+" 2 imp_empty64 plain64)
+assert_eq "R64.IMPORT empty sub-bitmap: EQ and ALL hold" "$(printf "1\n1")" "$result"
+
+# -------------------------------------------------------
+echo "--- SETBITARRAY reads raw bytes (upstream parity) ---"
+# Byte i == '1' sets bit i; a non-UTF-8 byte is just not '1'.
+result=$(run EVAL "redis.call('R.SETBITARRAY', KEYS[1], string.char(255) .. '1') return redis.call('R.GETINTARRAY', KEYS[1])" 1 sba_raw)
+assert_eq "SETBITARRAY with a non-UTF-8 byte" "1" "$result"
+result=$(run EVAL "redis.call('R64.SETBITARRAY', KEYS[1], string.char(200, 1) .. '01') return redis.call('R64.GETINTARRAY', KEYS[1])" 1 sba_raw64)
+assert_eq "R64 SETBITARRAY with non-UTF-8 bytes" "3" "$result"
+
+# -------------------------------------------------------
+echo "--- R.SETFULL interplay ---"
+run R.SETFULL qa_full > /dev/null
+assert_eq "SETFULL: BITPOS 0 is -1" "-1" "$(run R.BITPOS qa_full 0)"
+assert_eq "SETFULL: tail page" "$(printf "4294967293\n4294967294\n4294967295")" \
+  "$(run R.RANGEINTARRAY qa_full 4294967293 4294967295)"
+assert_eq "SETFULL: JACCARD with itself" "1" "$(run R.JACCARD qa_full qa_full)"
+assert_eq "SETFULL: NOT is empty" "0" "$(run R.BITOP NOT qa_not qa_full)"
+assert_contains "SETFULL: GETBITARRAY refused" "range too large" "$(run R.GETBITARRAY qa_full)"
+run R.SETBIT qa_full 77 0 > /dev/null
+assert_eq "SETFULL minus one bit: BITPOS 0" "77" "$(run R.BITPOS qa_full 0)"
+
+# -------------------------------------------------------
+echo "--- EXPORT is a read: TTL kept, allowed in read-only scripts ---"
+run R.SETRANGE qa_ttl 5 8 > /dev/null
+run EXPIRE qa_ttl 1000 > /dev/null
+run R.EXPORT qa_ttl > /dev/null
+assert_eq "EXPORT keeps the TTL" "1000" "$(run TTL qa_ttl)"
+run R.OPTIMIZE qa_ttl > /dev/null
+assert_eq "OPTIMIZE keeps the TTL" "1000" "$(run TTL qa_ttl)"
+assert_eq "EVAL_RO may call EXPORT" "1" \
+  "$(run EVAL_RO "if redis.call('R.EXPORT', KEYS[1]) then return 1 end return 0" 1 qa_ttl)"
+
+# -------------------------------------------------------
+echo "--- R64 paging across a 2^32 border ---"
+run R64.SETRANGE qa_border 4294967290 4294967300 > /dev/null
+assert_eq "R64 page straddles the border" "$(printf "4294967294\n4294967295\n4294967296\n4294967297")" \
+  "$(run R64.RANGEINTARRAY qa_border 4 7)"
+assert_eq "R64 BITPOS 0 after a border-crossing run" "0" "$(run R64.BITPOS qa_border 0)"
+run R64.SETRANGE qa_border 0 4294967290 > /dev/null
+assert_eq "R64 BITPOS 0 past a run across the border" "4294967300" "$(run R64.BITPOS qa_border 0)"
+
+# -------------------------------------------------------
+echo "--- CLEARBITS with only the COUNT flag ---"
+run R.SETINTARRAY qa_cb 1 2 3 > /dev/null
+assert_eq "CLEARBITS with only COUNT counts nothing (upstream parity)" "0" "$(run R.CLEARBITS qa_cb COUNT)"
+assert_eq "and clears nothing" "3" "$(run R.BITCOUNT qa_cb)"
+
 echo "=== SYSTEMATIC ERROR COVERAGE ==="
 run FLUSHALL > /dev/null
 
@@ -629,9 +744,163 @@ assert_contains "IMPORT with garbage binary" "bad binary" "$(run R.IMPORT import
 assert_contains "R64 IMPORT with garbage binary" "bad binary" "$(run R64.IMPORT importkey notaroaringblob)"
 assert_contains "SETBIT non-numeric offset" "invalid" "$(run R.SETBIT badkey abc 1)"
 assert_contains "SETBIT bit value out of range" "must be either 0 or 1" "$(run R.SETBIT badkey 1 2)"
-assert_contains "SETBIT offset out of 32-bit range" "out of range" "$(run R.SETBIT badkey 4294967296 1)"
+assert_eq "SETBIT offset out of 32-bit range" "ERR invalid offset: must be an unsigned 32 bit integer" "$(run R.SETBIT badkey 4294967296 1)"
 assert_contains "CONTAINS invalid mode" "invalid mode" "$(run R.CONTAINS wtsrc wtsrc BOGUS)"
 assert_contains "SETRANGE inverted range" "must be >= start" "$(run R.SETRANGE rangekey 5 2)"
+
+# -------------------------------------------------------
+echo "=== UPSTREAM PARITY: GRAMMAR, CHECK ORDER, REPLY FORMATS ==="
+# Exact replies as redis-roaring gives them (suite 09 of the testing repo
+# compares the same cases byte for byte against the upstream module).
+run FLUSHALL > /dev/null
+run SET pstr x > /dev/null
+run R.SETINTARRAY pr 1 2 3 100 > /dev/null
+run R64.SETINTARRAY pr64 1 2 3 100 > /dev/null
+run R.SETINTARRAY pe 1 > /dev/null
+run R.CLEAR pe > /dev/null
+
+echo "--- argument grammar ---"
+# 32-bit values: "0" or a non-zero digit then digits, at most 4294967295.
+# 64-bit values: an optional '+', digits (leading zeros allowed).
+U32="ERR invalid offset: must be an unsigned 32 bit integer"
+U64="ERR invalid offset: must be an unsigned 64 bit integer"
+for v in +5 005 -1 " 5" "5 " 1e3 0x10 4294967296 ""; do
+  assert_eq "R.GETBIT rejects '$v'" "$U32" "$(run R.GETBIT pr "$v")"
+done
+assert_eq "R64.GETBIT accepts +1" "1" "$(run R64.GETBIT pr64 +1)"
+assert_eq "R64.GETBIT accepts 003" "1" "$(run R64.GETBIT pr64 003)"
+for v in -1 " 5" 1e3 18446744073709551616 ""; do
+  assert_eq "R64.GETBIT rejects '$v'" "$U64" "$(run R64.GETBIT pr64 "$v")"
+done
+assert_eq "SETBIT value must be exactly 0 or 1" "ERR invalid value: must be either 0 or 1" "$(run R.SETBIT pr 1 01)"
+assert_eq "BITPOS bit must be exactly 0 or 1" "ERR invalid bit: must be either 0 or 1" "$(run R64.BITPOS pr64 +1)"
+assert_eq "SETINTARRAY value grammar" "ERR invalid value: must be an unsigned 32 bit integer" "$(run R.SETINTARRAY psi 1 +2)"
+assert_eq "  ... nothing stored" "0" "$(run EXISTS psi)"
+
+echo "--- check order ---"
+assert_eq "R.GETBIT answers 0 for a missing key before parsing" "0" "$(run R.GETBIT pmissing abc)"
+assert_eq "R64.GETBIT parses before the missing-key answer" "$U64" "$(run R64.GETBIT pmissing abc)"
+assert_contains "WRONGTYPE before argument errors (SETBIT)" "WRONGTYPE" "$(run R.SETBIT pstr abc 1)"
+assert_contains "WRONGTYPE before argument errors (SETRANGE)" "WRONGTYPE" "$(run R64.SETRANGE pstr x y)"
+assert_contains "WRONGTYPE before argument errors (RANGEINTARRAY)" "WRONGTYPE" "$(run R.RANGEINTARRAY pstr x y)"
+assert_eq "GETBITS on a missing key: empty, offsets unparsed" "" "$(run R.GETBITS pmissing abc)"
+assert_eq "CLEARBITS on a missing key: nil, offsets unparsed" "" "$(run R.CLEARBITS pmissing abc)"
+assert_eq "DELETEINTARRAY on a missing key: created, values unparsed" "OK" "$(run R.DELETEINTARRAY pdel abc)"
+assert_eq "  ... as an empty key" "0" "$(run R.BITCOUNT pdel)"
+assert_contains "DIFF checks the destination type first" "WRONGTYPE" "$(run R.DIFF pstr pmissing pr)"
+assert_eq "BITOP NOT parses last before key types" "ERR invalid last: must be an unsigned 32 bit integer" "$(run R.BITOP NOT pstr pr abc)"
+assert_contains "variadic BITOP checks the destination first" "WRONGTYPE" "$(run R.BITOP AND pstr pr pmissing)"
+assert_eq "R SETRANGE end before start" "ERR invalid end: must be >= start" "$(run R.SETRANGE psr 5 2)"
+assert_eq "R64 SETRANGE end before start (upstream's wording)" "ERR invalid end: must >= start" "$(run R64.SETRANGE psr 5 2)"
+assert_eq "OPTIMIZE requires the key" "Roaring: key does not exist" "$(run R.OPTIMIZE pmissing)"
+assert_eq "R64.OPTIMIZE requires the key" "Roaring: key does not exist" "$(run R64.OPTIMIZE pmissing)"
+
+echo "--- case-sensitive tokens ---"
+assert_eq "BITOP operation names are exact" "ERR syntax error" "$(run R.BITOP and pd pr pr)"
+assert_eq "BITOP NOT is exact" "ERR syntax error" "$(run R64.BITOP not pd pr64)"
+assert_eq "CONTAINS modes are exact" "ERR invalid mode argument: all" "$(run R.CONTAINS pr pr all)"
+assert_eq "CONTAINS rejects an explicit NONE" "ERR invalid mode argument: NONE" "$(run R.CONTAINS pr pr NONE)"
+assert_eq "CONTAINS echoes a non-UTF-8 mode byte for byte" "255" "$(run EVAL "return string.byte(redis.pcall('R.CONTAINS', KEYS[1], KEYS[1], 'x\255').err, -1)" 1 pr)"
+assert_eq "CLEARBITS takes only COUNT as the flag" "$U32" "$(run R.CLEARBITS pr 1 count)"
+assert_contains "STAT takes only JSON for JSON" "type: bitmap" "$(run R.STAT pr json)"
+
+echo "--- JACCARD ---"
+run R.SETINTARRAY pq 1 2 > /dev/null
+run R.SETINTARRAY pj 1 > /dev/null
+run R.SETRANGE pj3 1 4 > /dev/null
+assert_eq "JACCARD of two empty sets is -1" "-1" "$(run R.JACCARD pe pe)"
+assert_eq "JACCARD of disjoint sets is 0" "0" "$(run R.JACCARD pe pr)"
+assert_eq "JACCARD exact decimal" "0.5" "$(run R.JACCARD pr pq)"
+assert_eq "JACCARD otherwise %.17g" "0.33333333333333331" "$(run R.JACCARD pj pj3)"
+assert_eq "JACCARD is a bulk string (RESP2)" "string" "$(run EVAL "return type(redis.call('R.JACCARD', KEYS[1], KEYS[2]))" 2 pj pj3)"
+assert_eq "JACCARD is a bulk string (RESP3)" "string" "$(run EVAL "redis.setresp(3); return type(redis.call('R.JACCARD', KEYS[1], KEYS[2]))" 2 pj pj3)"
+
+echo "--- GETBITARRAY / STAT formats ---"
+assert_eq "GETBITARRAY of an empty key is 0" "0" "$(run R.GETBITARRAY pe)"
+assert_eq "GETBITARRAY of a missing key is a simple string" "table" "$(run EVAL "return type(redis.call('R.GETBITARRAY', KEYS[1]))" 1 pmissing)"
+expected=$(printf 'type: bitmap\ncardinality: 4\nnumber of containers: 1\nmax value: 100\nmin value: 1\nnumber of array containers: 1\n\tarray container values: 4\n\tarray container bytes: 8\nbitset  containers: 0\n\tbitset  container values: 0\n\tbitset  container bytes: 0\nrun containers: 0\n\trun container values: 0\n\trun container bytes: 0')
+assert_eq "STAT text in upstream's layout and units" "$expected" "$(run R.STAT pr)"
+assert_contains "STAT of an empty key: min is the width's maximum" "min value: 4294967295" "$(run R.STAT pe)"
+assert_contains "STAT on R64 keys" "type: bitmap64" "$(run R.STAT pr64)"
+assert_eq "STAT is a verbatim txt string (RESP3)" "txt" "$(run EVAL "redis.setresp(3); return redis.call('R.STAT', KEYS[1]).verbatim_string.format" 1 pr)"
+
+echo "--- 64-bit positions ---"
+assert_eq "full-width R.RANGEINTARRAY lists the set" "$(printf '1\n2\n3\n100')" "$(run R.RANGEINTARRAY pr 0 4294967295)"
+assert_contains "one short of full width is over the cap" "range too large" "$(run R.RANGEINTARRAY pr 0 4294967294)"
+assert_eq "full-width R64.RANGEINTARRAY lists the set" "$(printf '1\n2\n3\n100')" "$(run R64.RANGEINTARRAY pr64 0 18446744073709551615)"
+assert_eq "R64 positions past 2^63 are positions" "" "$(run R64.RANGEINTARRAY pr64 9223372036854775808 9223372036854775810)"
+assert_eq "R64 window of exactly 100M positions is allowed" "100" "$(run R64.RANGEINTARRAY pr64 3 100000002)"
+assert_contains "R64 window wider than the cap is refused" "range too large" "$(run R64.RANGEINTARRAY pr64 3 100000003)"
+
+# -------------------------------------------------------
+echo "=== LIMITS ==="
+# Commands that would list or build more than the limits refuse up front.
+R238="Roaring: range too large: maximum 274877906944 elements"
+run R.SETFULL lfull > /dev/null
+assert_eq "GETINTARRAY past 100M values refused" "Roaring: range too large: maximum 100000000 elements" "$(run R.GETINTARRAY lfull)"
+assert_eq "R64.SETFULL refused" "$R238" "$(run R64.SETFULL lfull64)"
+assert_eq "  ... nothing stored" "0" "$(run EXISTS lfull64)"
+assert_eq "R64.SETRANGE past 2^38 values refused" "$R238" "$(run R64.SETRANGE lsr 0 274877906945)"
+assert_eq "R64.SETRANGE of a full 32-bit sub-bitmap works" "OK" "$(run R64.SETRANGE lsr 4294967296 8589934592)"
+assert_eq "  ... 2^32 values" "4294967296" "$(run R64.BITCOUNT lsr)"
+assert_eq "R64.BITOP NOT up to 2^64 refused" "$R238" "$(run R64.BITOP NOT lnot lmissing 18446744073709551615)"
+run R64.SETBIT lbig 9223372036854775808 1 > /dev/null
+assert_eq "R64.BITOP NOT of a source past 2^38 refused" "$R238" "$(run R64.BITOP NOT lnot lbig)"
+assert_eq "  ... destination untouched" "0" "$(run EXISTS lnot)"
+assert_eq "R64.BITOP NOT over a full 32-bit universe works" "4294967296" "$(run R64.BITOP NOT lnot lmissing 4294967295)"
+assert_eq "R.BITOP NOT up to 4294967295 works" "4294967292" "$(run R.BITOP NOT lnot32 pr 4294967295)"
+assert_eq "server alive after the limits" "PONG" "$(run PING)"
+run DEL lfull lsr lnot lnot32 lbig > /dev/null
+
+# -------------------------------------------------------
+echo "=== IMPORT VALIDATION ==="
+# A blob must be exactly one valid bitmap: trailing bytes and 64-bit blobs
+# whose high words do not strictly increase are refused, never truncated
+# or merged.
+BAD="ERR bad binary data for roaring"
+run R.SETINTARRAY vsrc 1 2 70000 > /dev/null
+assert_eq "IMPORT rejects trailing bytes" "$BAD" "$(run EVAL "return redis.pcall('R.IMPORT', KEYS[2], redis.call('R.EXPORT', KEYS[1]) .. '\0')" 2 vsrc vdst)"
+assert_eq "  ... nothing stored" "0" "$(run EXISTS vdst)"
+assert_eq "IMPORT accepts the exact blob" "3" "$(run EVAL "return redis.call('R.IMPORT', KEYS[2], redis.call('R.EXPORT', KEYS[1]))" 2 vsrc vdst)"
+# 64-bit layout: u64 count, then per sub-bitmap a u32 high word and a 32-bit blob.
+B64="local s = redis.call('R.EXPORT', KEYS[1]); local function hi(h) return string.char(h, 0, 0, 0) end; local two = string.char(2, 0, 0, 0, 0, 0, 0, 0)"
+assert_eq "R64.IMPORT rejects a repeated high word" "$BAD" "$(run EVAL "$B64; return redis.pcall('R64.IMPORT', KEYS[2], two .. hi(0) .. s .. hi(0) .. s)" 2 vsrc v64)"
+assert_eq "R64.IMPORT rejects decreasing high words" "$BAD" "$(run EVAL "$B64; return redis.pcall('R64.IMPORT', KEYS[2], two .. hi(3) .. s .. hi(1) .. s)" 2 vsrc v64)"
+assert_eq "R64.IMPORT rejects trailing bytes" "$BAD" "$(run EVAL "$B64; return redis.pcall('R64.IMPORT', KEYS[2], two .. hi(1) .. s .. hi(3) .. s .. 'x')" 2 vsrc v64)"
+assert_eq "  ... nothing stored" "0" "$(run EXISTS v64)"
+assert_eq "R64.IMPORT accepts increasing high words" "6" "$(run EVAL "$B64; return redis.call('R64.IMPORT', KEYS[2], two .. hi(1) .. s .. hi(3) .. s)" 2 vsrc v64)"
+assert_eq "  ... under both high words" "$(printf '4294967297\n12884901889')" "$(run R64.RANGEINTARRAY v64 0 0; run R64.RANGEINTARRAY v64 3 3)"
+
+echo "=== NO-OP WRITES ==="
+# Writes that change nothing must not replicate, hit the AOF or count toward
+# RDB save points. replicate_verbatim drives all three and increments the
+# dirty counter, so rdb_changes_since_last_save observes them on one server.
+run FLUSHALL > /dev/null
+dirty() { run INFO persistence | grep rdb_changes_since_last_save | cut -d: -f2 | tr -d '\r'; }
+run R.SETINTARRAY nop 5 6 7 > /dev/null
+run R64.SETINTARRAY nop64 5 5000000000 > /dev/null
+run R.SETBIT nopempty 1 0 > /dev/null
+before=$(dirty)
+assert_eq "no-op SETBIT 1 on a set bit replies 1" "1" "$(run R.SETBIT nop 5 1)"
+assert_eq "no-op SETBIT 0 on a clear bit replies 0" "0" "$(run R.SETBIT nop 9 0)"
+assert_eq "no-op APPENDINTARRAY replies OK" "OK" "$(run R.APPENDINTARRAY nop 5 6)"
+assert_eq "no-op DELETEINTARRAY replies OK" "OK" "$(run R.DELETEINTARRAY nop 99)"
+assert_eq "no-op CLEARBITS COUNT replies 0" "0" "$(run R.CLEARBITS nop 99 COUNT)"
+assert_eq "no-op SETRANGE replies OK" "OK" "$(run R.SETRANGE nop 5 8)"
+assert_eq "no-op CLEAR on an empty key replies 0" "0" "$(run R.CLEAR nopempty)"
+assert_eq "no-op R64.SETBIT replies 1" "1" "$(run R64.SETBIT nop64 5000000000 1)"
+assert_eq "no-op R64.SETRANGE replies OK" "OK" "$(run R64.SETRANGE nop64 5 6)"
+run EVAL "return redis.call('R.IMPORT', KEYS[1], redis.call('R.EXPORT', KEYS[1]))" 1 nop > /dev/null
+run R.EXPORT nop > /dev/null
+run R.GETINTARRAY nop > /dev/null
+assert_eq "no-op writes and reads leave the dirty counter alone" "$before" "$(dirty)"
+run R.SETBIT nop 9 1 > /dev/null
+assert_eq "a real SETBIT counts one change" "$((before + 1))" "$(dirty)"
+run R.SETRANGE nop 7 10 > /dev/null
+assert_eq "a partly new SETRANGE counts" "$((before + 2))" "$(dirty)"
+assert_eq "SETBIT 0 on a missing key still creates it (upstream)" "0" "$(run R.SETBIT ghost 3 0)"
+assert_eq "created key exists" "1" "$(run EXISTS ghost)"
+assert_eq "key creation counts as a change" "$((before + 3))" "$(dirty)"
 
 echo "=== REPLICATION PROPAGATION ==="
 run FLUSHALL > /dev/null
@@ -681,6 +950,71 @@ sleep 2
 docker restart vr-test-aof > /dev/null
 for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
 assert_eq "AOF rewrite (RDB preamble) preserves data" "1" "$($ACLI R.GETBIT aofk 7)"
+docker rm -f vr-test-aof > /dev/null 2>&1 || true
+
+# Without the RDB preamble a rewrite calls each type's aof_rewrite callback,
+# which re-emits every key as one R.IMPORT / R64.IMPORT of its blob.
+docker run -d --name vr-test-aof --network "$NET" "$IMG" \
+  valkey-server --loadmodule /usr/lib/valkey/modules/libvalkey_roaring.so \
+  --appendonly yes --aof-use-rdb-preamble no > /dev/null
+for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
+$ACLI R.SETINTARRAY legacy32 1 2 70000 > /dev/null
+$ACLI R.SETRANGE legacy32 100 200 > /dev/null
+$ACLI R64.SETINTARRAY legacy64 3 5000000000 18446744073709551615 > /dev/null
+$ACLI R.SETBIT legacyempty 4 0 > /dev/null
+$ACLI BGREWRITEAOF > /dev/null
+for _ in $(seq 1 30); do
+  info=$($ACLI INFO persistence)
+  [[ "$info" == *"aof_rewrite_in_progress:0"* && "$info" == *"aof_rewrite_scheduled:0"* ]] && break
+  sleep 1
+done
+assert_contains "AOF rewrite without preamble succeeds" "aof_last_bgrewrite_status:ok" "$($ACLI INFO persistence)"
+docker restart vr-test-aof > /dev/null
+for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
+assert_eq "legacy AOF restores R cardinality" "103" "$($ACLI R.BITCOUNT legacy32)"
+assert_eq "legacy AOF restores R values" "1" "$($ACLI R.GETBIT legacy32 70000)"
+assert_eq "legacy AOF restores R64 max value" "18446744073709551615" "$($ACLI R64.MAX legacy64)"
+assert_eq "legacy AOF restores R64 cardinality" "3" "$($ACLI R64.BITCOUNT legacy64)"
+assert_eq "legacy AOF restores an empty key" "1" "$($ACLI EXISTS legacyempty)"
+docker rm -f vr-test-aof > /dev/null 2>&1 || true
+
+# Commands written by valkey-roaring 1.1.1 replay from its AOF even where
+# a client now gets an error: 1.1.1 accepted IMPORT blobs with trailing
+# bytes or repeated/decreasing 64-bit high words, "+5"/"007" values, "01"
+# bits and lowercase BITOP operations, and logged them verbatim. They are
+# appended here to an AOF by hand, as 1.1.1 would have written them.
+docker run -d --name vr-test-aof --network "$NET" "$IMG" \
+  valkey-server --loadmodule /usr/lib/valkey/modules/libvalkey_roaring.so \
+  --appendonly yes > /dev/null
+for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
+$ACLI SET aofmarker 1 > /dev/null
+sleep 1.5
+INCR=$($ACLI CONFIG GET appenddirname | tail -1)/$(docker exec vr-test-aof sh -c 'ls "$(valkey-cli CONFIG GET appenddirname | tail -1)"' | grep incr | tail -1)
+docker stop vr-test-aof > /dev/null
+AOFTMP=$(mktemp -d)
+docker cp "vr-test-aof:/data/$INCR" "$AOFTMP/incr.aof"
+B12='\x3a\x30\x00\x00\x01\x00\x00\x00\x00\x00\x01\x00\x10\x00\x00\x00\x01\x00\x02\x00'  # R blob {1,2}
+B7='\x3a\x30\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x07\x00'          # R blob {7}
+{
+  printf '*3\r\n$8\r\nR.IMPORT\r\n$5\r\nlgtrl\r\n$24\r\n'"$B12"'JUNK\r\n'
+  printf '*3\r\n$10\r\nR64.IMPORT\r\n$5\r\nlgdup\r\n$54\r\n\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'"$B12"'\x00\x00\x00\x00'"$B7"'\r\n'
+  printf '*3\r\n$10\r\nR64.IMPORT\r\n$5\r\nlgdec\r\n$54\r\n\x02\x00\x00\x00\x00\x00\x00\x00\x05\x00\x00\x00'"$B12"'\x02\x00\x00\x00'"$B7"'\r\n'
+  printf '*4\r\n$8\r\nR.SETBIT\r\n$6\r\nlgplus\r\n$2\r\n+5\r\n$2\r\n01\r\n'
+  printf '*5\r\n$16\r\nR.APPENDINTARRAY\r\n$6\r\nlgplus\r\n$3\r\n007\r\n$2\r\n+9\r\n$2\r\n10\r\n'
+  printf '*5\r\n$7\r\nR.BITOP\r\n$2\r\nor\r\n$4\r\nlgor\r\n$5\r\nlgtrl\r\n$6\r\nlgplus\r\n'
+} >> "$AOFTMP/incr.aof"
+docker cp "$AOFTMP/incr.aof" "vr-test-aof:/data/$INCR"
+rm -rf "$AOFTMP"
+docker start vr-test-aof > /dev/null
+for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
+assert_eq "1.1.1 AOF: IMPORT with trailing bytes replays" "$(printf '1\n2')" "$($ACLI R.GETINTARRAY lgtrl)"
+assert_eq "1.1.1 AOF: a repeated high word keeps the last entry, as 1.1.1 did" "7" "$($ACLI R64.GETINTARRAY lgdup)"
+assert_eq "1.1.1 AOF: decreasing high words replay" "$(printf '8589934599\n21474836481\n21474836482')" "$($ACLI R64.GETINTARRAY lgdec)"
+assert_eq "1.1.1 AOF: +5 / 01 / 007 / +9 replay" "$(printf '5\n7\n9\n10')" "$($ACLI R.GETINTARRAY lgplus)"
+assert_eq "1.1.1 AOF: a lowercase BITOP replays" "$(printf '1\n2\n5\n7\n9\n10')" "$($ACLI R.GETINTARRAY lgor)"
+assert_eq "1.1.1 AOF: nothing failed on replay" "0" "$(docker logs vr-test-aof 2>&1 | grep -c CRITICAL)"
+assert_eq "clients still get the strict grammar" "ERR invalid offset: must be an unsigned 32 bit integer" "$($ACLI R.SETBIT lgplus +5 1)"
+assert_eq "clients still get strict IMPORT" "ERR bad binary data for roaring" "$($ACLI EVAL "return redis.pcall('R.IMPORT', KEYS[1], redis.call('R.EXPORT', KEYS[1]) .. 'JUNK')" 1 lgtrl)"
 docker rm -f vr-test-aof > /dev/null 2>&1 || true
 
 # -------------------------------------------------------

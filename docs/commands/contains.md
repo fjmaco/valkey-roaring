@@ -20,6 +20,7 @@ Integer 0 or 1.
 ## Notes
 
 - The default overlap check has no token — an explicit `NONE` argument is rejected (redis-roaring parity).
+- Modes are case-sensitive (`all` is rejected), and the error names the argument as given: `ERR invalid mode argument: all`.
 
 ## Example
 

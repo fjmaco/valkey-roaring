@@ -16,7 +16,9 @@ fuzz_target!(|data: &[u8]| {
     for c in data[1..].chunks_exact(2) {
         sets[(c[0] as usize) % n].insert(c[1] as u32);
     }
-    let sources: Vec<RoaringBitmap> = sets.iter().map(|s| s.iter().copied().collect()).collect();
+    let owned: Vec<RoaringBitmap> = sets.iter().map(|s| s.iter().copied().collect()).collect();
+    let sources: Vec<&RoaringBitmap> = owned.iter().collect();
+    let sources = &sources[..];
 
     let universe: BTreeSet<u32> = sets.iter().flatten().copied().collect();
     let count = |v: u32| sets.iter().filter(|s| s.contains(&v)).count();
@@ -28,16 +30,16 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(result, expected, "op {} over {:?}", name, sets);
     };
 
-    check("AND", op_and(sources.clone()), &|v| count(v) == n);
-    check("OR", op_or(sources.clone()), &|v| count(v) > 0);
-    check("XOR", op_xor(sources.clone()), &|v| count(v) % 2 == 1);
-    check("ONE", op_one(sources.clone()), &|v| count(v) == 1);
-    check("DIFF", op_andnot(sources.clone()), &|v| {
+    check("AND", op_and(sources), &|v| count(v) == n);
+    check("OR", op_or(sources), &|v| count(v) > 0);
+    check("XOR", op_xor(sources), &|v| count(v) % 2 == 1);
+    check("ONE", op_one(sources), &|v| count(v) == 1);
+    check("DIFF", op_andnot(sources), &|v| {
         in_first(v) && !in_rest(v)
     });
     // ANDOR / DIFF1 with a single source are defined as empty; the reference
     // agrees because in_rest is always false there.
-    check("ANDOR", op_andor(sources.clone()), &|v| {
+    check("ANDOR", op_andor(sources), &|v| {
         n >= 2 && in_first(v) && in_rest(v)
     });
     check("DIFF1", op_ornot(sources), &|v| {

@@ -22,7 +22,7 @@ Built in Rust on the official [valkey-module](https://crates.io/crates/valkey-mo
 
 ## Origins
 
-valkey-roaring is based on [redis-roaring](https://github.com/aviggiano/redis-roaring) by Antonio Viggiano and contributors. The command surface and semantics follow redis-roaring, and development continues to track its changes and improvements — applications built against redis-roaring's commands work here unchanged. The binary export/import commands address a long-requested capability ([redis-roaring#141](https://github.com/aviggiano/redis-roaring/issues/141)).
+valkey-roaring is based on [redis-roaring](https://github.com/aviggiano/redis-roaring) by Antonio Viggiano and contributors. The command surface and semantics follow redis-roaring, and development continues to track its changes and improvements — applications built against redis-roaring's commands work here unchanged. Replies match redis-roaring's byte for byte, argument grammar, error wording and reply types included, except where upstream crashes, overflows or drops data, and in `R.STAT`'s per-encoding container breakdown, which reflects this module's container encodings; the [command reference](https://fjmaco.github.io/valkey-roaring/commands/) lists those cases and the limits that replace them. The binary export/import commands address a long-requested capability ([redis-roaring#141](https://github.com/aviggiano/redis-roaring/issues/141)).
 
 Where redis-roaring wraps the CRoaring C library as a Redis module, valkey-roaring is a ground-up Rust implementation targeting Valkey. The bitmaps come from [roaring-rs](https://github.com/RoaringBitmap/roaring-rs), the RoaringBitmap project's pure-Rust implementation, and the module layer is built on [valkeymodule-rs](https://github.com/valkey-io/valkeymodule-rs), the Valkey project's official Rust SDK. Staying on an all-Rust stack means the module inherits the upstream crate's correctness and performance work, builds with a single `cargo build` and no C toolchain, and picks up improvements to both the bitmap library and the Valkey module ecosystem with a dependency bump.
 
@@ -115,7 +115,7 @@ All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` varia
 ### Range and Fill
 
 - `R.SETRANGE key start end` — Set all bits in the end-exclusive range [start, end)
-- `R.SETFULL key` — Set all possible bits (errors if key exists)
+- `R.SETFULL key` — Set all possible bits (errors if key exists; `R64.SETFULL` is refused, see [Known Limitations](#known-limitations))
 
 ### Aggregation
 
@@ -163,6 +163,8 @@ All BITOP operations return the cardinality of the result.
 
 The binary output of `R.EXPORT` is compatible with any [CRoaring-compatible library](#croaring-compatible-libraries) (Java, Go, Python, C++, Rust). This is the recommended way to transfer bitmaps between services.
 
+`R.EXPORT` is canonical: one set always exports the same bytes, whatever sequence of writes built it, so consumers can hash or dedupe blobs. It counts as a read — it never invalidates `WATCH` or client-side caching and is not replicated. `R.IMPORT` rejects malformed blobs with `ERR bad binary data for roaring`, including the oversized array containers some producers emit (Go roaring v1.9.4's `FastOr`/`ParOr`).
+
 From a shell, use `valkey-cli`'s raw output and `-x` (both are binary-safe;
 pasting binary as a command argument is not):
 
@@ -180,7 +182,7 @@ redis.call('R.IMPORT', 'destination', data)
 
 ### Maintenance
 
-- `R.OPTIMIZE key` — Optimize internal container storage for better compression
+- `R.OPTIMIZE key` — Optimize internal container storage for better compression (the key must exist)
 - `R.STAT key [TEXT|JSON]` — Container statistics (works for both `R.*` and `R64.*` keys)
 
 ### 64-bit Commands
@@ -255,7 +257,7 @@ OK
 
 # Jaccard similarity
 127.0.0.1:6379> R.JACCARD a b
-"0.4285714285714286"
+"0.42857142857142855"
 
 # check if a is a subset of b
 127.0.0.1:6379> R.CONTAINS a b ALL
@@ -289,38 +291,65 @@ fn handle_setbit<T: RoaringType>(ctx, args, vtype) -> ValkeyResult { ... }
 ### Persistence and Replication
 
 - **RDB:** Bitmaps serialize via the CRoaring portable binary format. Data survives `BGSAVE` and server restarts.
-- **Replication:** Every write command propagates verbatim to replicas and to the AOF command stream.
-- **AOF:** Supported with the default configuration (`aof-use-rdb-preamble yes`): incremental writes reach the AOF through verbatim propagation, and rewrites use the RDB serialization as the base. The legacy non-preamble AOF mode is not supported (the Valkey Rust SDK does not expose the varargs `EmitAOF` C function needed for its per-type rewrite callback).
+- **Replication:** Every write that changes a key propagates verbatim to replicas and to the AOF command stream. Writes that change nothing — `R.SETBIT` to the value a bit already has, `R.APPENDINTARRAY` of present values, `R.DELETEINTARRAY` / `R.CLEARBITS` of absent ones, `R.SETRANGE` over an already-set range, `R.IMPORT` of a subset, `R.CLEAR` of an empty key — reply as usual but are not propagated, do not count toward RDB save points, and do not invalidate `WATCH` or client-side caching. A write to a missing key always counts: it creates the key (`R.SETBIT key n 0` creates an empty bitmap, as upstream does).
+- **AOF:** Supported in both modes. With the default `aof-use-rdb-preamble yes`, rewrites use the RDB serialization as the base. With `aof-use-rdb-preamble no`, the per-type rewrite callback re-emits each key as one `R.IMPORT` / `R64.IMPORT` of its portable blob.
 - **Registered type names:** `vrroaring` (32-bit), `vroarng64` (64-bit).
+- **Upgrading from 1.1.1:** RDB files and DUMP payloads load unchanged, and commands replayed from a 1.1.1 AOF or received from a 1.1.1 primary are read with 1.1.1's input rules, so they keep its results even where clients now get an error. Run `BGREWRITEAOF` on 1.1.1 before upgrading all the same: it leaves no 1.1.1 command history to replay (see [the guide](https://fjmaco.github.io/valkey-roaring/guide/persistence-and-replication)).
 
 ### Memory Management
 
 The module sets Rust's global allocator to `ValkeyAlloc`, routing all allocations (bitmaps, buffers, temporary structures) through Valkey's memory tracking. This ensures `INFO MEMORY` accurately reflects module usage.
 
+Each value reports one unit of free effort per 16 containers, so with lazy freeing enabled (`UNLINK`, or the `lazyfree-lazy-*` settings, `lazyfree-lazy-server-del` being on by default) bitmaps of more than 1,024 containers are freed on a background thread instead of blocking the main thread. Smaller ones are freed in place, which is cheaper than handing them over: overwriting a BITOP or DIFF destination of ~150 containers costs ~10 µs more through the lazy-free thread.
+
+### Fault Isolation
+
+Every command runs inside a panic guard. If a bug in the module or in roaring-rs panics, the client gets `ERR internal error (panic): <message>`, the server log gets a warning, and the server keeps running. Without the guard, a panic unwinding into Valkey's C code aborts the process.
+
 ## Tests
 
 Three layers, all run by CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request, alongside `rustfmt`/`clippy` gates and a unit-layer coverage report. The [benchmark workflow](.github/workflows/benchmark.yml) refreshes the table below whenever performance-relevant code changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for running the gates locally.
 
-**Unit and property tests** (no server needed) — 38 tests covering every
+**Unit and property tests** (no server needed) — 93 tests covering every
 hand-written algorithm:
 
 ```bash
 cargo test
 ```
 
-- `nth_absent`, `flip_inclusive`, bit-array codecs, `remove_many_counted`,
+- `nth_absent`, `flip_inclusive`, bit-array codecs, bulk-op change counts,
   select bounds, u64 reply saturation — including type-boundary edge cases
+- Range containment (the `SETRANGE` no-op check) against brute force, across
+  R64's 32-bit sub-bitmap boundaries; no-op writes leave the serialized
+  layout byte-identical
+- The panic guard turns panics into single-line error messages; free effort
+  is never 0 (which the server reads as "always free asynchronously")
 - All 7 BITOP kernels checked against a naive reference over ~1,100 randomized
   source combinations (both bitmap widths)
 - 32-bit / 64-bit parity over 12,000 randomized operations
 - Serialization round-trips, plus 800+ corrupted/truncated/garbage inputs fed
-  through the `R.IMPORT` deserialization path asserting it never panics
+  through the `R.IMPORT` deserialization path asserting it never panics, and
+  oversized array containers (Go roaring `FastOr` output) rejected
+- Canonical `R.EXPORT`: sets built five different ways (bulk, range writes,
+  bit by bit, trimmed supersets) export byte-identical blobs on both widths
+- Fast paths against their reference forms: bulk construction vs inserts,
+  `RANGEINTARRAY` paging vs per-position select, both intersection strategies,
+  allocation-free argument parsing vs the former `String` parse; the
+  `MEMORY USAGE` heap model is pinned to roaring-rs's statistics units
+- Upstream formats and grammars: redis-roaring's 32-bit and 64-bit argument
+  parsers reimplemented as oracles, JACCARD's decimal/`%.17g` formatting
+  against C `printf` values, `R.STAT`'s text and JSON byte for byte; IMPORT
+  validation (trailing bytes, repeated or decreasing 64-bit high words,
+  every truncation) on both widths, and 1.1.1's grammars and decoding for
+  replayed commands
+- Cost guards: canonical EXPORT and interleaved unions stay linear, and an
+  R64 SETRANGE check on a million-container key does not walk the key
 
 The coverage badge reports the unit/property layer only; the command
 handlers it cannot instrument are exercised by the integration suite below
 (see `codecov.yml` for the scoping rationale).
 
-**Integration suite** — 283 assertions against a live Valkey instance:
+**Integration suite** — 432 assertions against a live Valkey instance:
 
 ```bash
 # From the repository root (requires running docker compose)
@@ -333,31 +362,43 @@ bash tests/integration.sh
 - EXPORT/IMPORT binary round-trip via Lua
 - RDB persistence across server restart
 - Replication: module writes verified on a live replica
-- AOF: replay after restart and rewrite via the RDB preamble
+- No-op writes leave the dirty counter (and so replication and the AOF) untouched
+- AOF: replay after restart, and rewrites both via the RDB preamble and without it
 - Dynamic GETKEYS, `BITOP NOT ... last`, duplicate-offset and BITPOS edge cases
+- Upstream parity on one server: argument grammars, check order, exact error
+  texts, case-sensitive tokens, JACCARD and STAT reply types (checked through
+  Lua under RESP2 and RESP3), full-width and 64-bit pagination
+- Limits: oversized GETINTARRAY, `R64.SETFULL`, wide `R64.SETRANGE` and
+  `R64.BITOP NOT` refused up front, the full 32-bit space still accepted
+- IMPORT validation: trailing bytes and non-increasing 64-bit high words
+- Upgrade safety: an AOF holding commands only 1.1.1 accepted (lenient IMPORT
+  blobs, `+5`/`007`/`01`, lowercase BITOP) replays to 1.1.1's sets, while
+  clients still get the strict grammar
 - Systematic error coverage: wrong-arity for all 51 commands, WRONGTYPE for
   every key command against a mistyped key, semantic errors (missing keys,
   bad binary, out-of-range values)
 
-**Fuzzing** — three [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz)
+**Fuzzing** — four [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz)
 targets run 60s each on every push/PR and 10 minutes nightly, with a
 persistent corpus cached between runs:
 
 ```bash
-cargo +nightly fuzz run import_bytes    # untrusted bytes into the R.IMPORT path
-cargo +nightly fuzz run parity_ops      # 32-bit vs 64-bit behavioral parity
-cargo +nightly fuzz run bitop_kernels   # BITOP kernels vs a naive reference
+cargo +nightly fuzz run import_bytes      # untrusted bytes into the R.IMPORT path
+cargo +nightly fuzz run parity_ops        # 32-bit vs 64-bit behavioral parity
+cargo +nightly fuzz run bitop_kernels     # BITOP kernels vs a naive reference
+cargo +nightly fuzz run export_canonical  # imported encodings still export one canonical blob
 ```
 
 **Performance benchmark** — see [Performance](#performance); CI runs a smoke
 subset on every push.
 
-**External validation** — twelve end-to-end suites live in a separate
-repository,
+**External validation** — nineteen end-to-end suites (two of them, load/soak
+and very large keys, run only on request) live in a separate repository,
 [fjmaco/-valkey-roaring-testing](https://github.com/fjmaco/-valkey-roaring-testing):
 real-dataset semantics against a reference model, CRoaring interop,
-differential runs against redis-roaring, replication, cluster, torture, and
-workflow contracts. They are kept out of this tree deliberately — they
+differential runs against redis-roaring, replication, cluster, torture,
+workflow contracts, canonical EXPORT, write signals, streamed replies and
+memory accounting. They are kept out of this tree deliberately — they
 validate the module the way an outside consumer would, through the wire
 protocol, the Docker image and the published binary format only, and share
 no code with it. That is also where new end-to-end tests belong.
@@ -445,6 +486,5 @@ The binary format produced by `R.EXPORT` / `R.IMPORT` is the standard CRoaring p
 
 ## Known Limitations
 
-- **Legacy AOF mode**: with `aof-use-rdb-preamble no` (non-default), AOF rewrites cannot include module data — the Valkey Rust SDK does not expose `EmitAOF`. The default preamble mode is fully supported.
-- **`R64.SETFULL`** materializes containers for the entire u64 range, which exhausts memory long before completing — inherent to an eager roaring representation (the C module has the same behavior). Avoid it; use `R64.SETRANGE` over the range you actually need.
+- **Size limits.** One write builds at most 2³⁸ contiguous values (4,194,304 full containers, about 200 MB as runs, about 0.1 s; the bound is per call, so one write can take up to about 200 MB past `maxmemory` before `deny-oom` refuses further writes): `R64.SETFULL`, wider `R64.SETRANGE` calls and `R64.BITOP NOT` over a universe past 2³⁸ are refused with `Roaring: range too large: maximum 274877906944 elements` instead of allocating until the server is killed (redis-roaring has no such guard). The whole 32-bit space is within the limit (`R.SETFULL`, about 3 MB). Replies that list values (`GETINTARRAY`, `RANGEINTARRAY`, `GETBITARRAY`) are capped at 100,000,000 elements, as upstream caps `RANGEINTARRAY`.
 - **`R.EXPORT` / `R.IMPORT`** binaries cannot be pasted as command arguments; use `valkey-cli -x` / raw output redirection, Lua, or a client library (see [Export / Import](#export--import)).

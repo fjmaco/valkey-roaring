@@ -1,3 +1,6 @@
+# Valkey base image; CI also builds against newer lines (see ci.yml).
+ARG VALKEY_VERSION=8.1
+
 FROM rust:1.92-bookworm AS builder
 
 RUN apt-get update && apt-get install -y libclang-dev && rm -rf /var/lib/apt/lists/*
@@ -9,7 +12,7 @@ COPY src/ src/
 
 RUN cargo build --release --locked
 
-FROM valkey/valkey:8.1
+FROM valkey/valkey:${VALKEY_VERSION}
 
 COPY --from=builder /build/target/release/libvalkey_roaring.so /usr/lib/valkey/modules/libvalkey_roaring.so
 

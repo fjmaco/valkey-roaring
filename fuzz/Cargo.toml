@@ -35,3 +35,10 @@ path = "fuzz_targets/bitop_kernels.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "export_canonical"
+path = "fuzz_targets/export_canonical.rs"
+test = false
+doc = false
+bench = false

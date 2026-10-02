@@ -67,6 +67,38 @@ jobs:
         if: failure()
         run: docker compose logs
 
+  # Same suite on the Valkey 9.0 line, built from the same Dockerfile. Kept as
+  # its own job (not a matrix) so the required "Integration and performance
+  # smoke" check keeps its name.
+  integration-valkey9:
+    name: Integration (Valkey 9.0)
+    runs-on: ubuntu-latest
+    env:
+      VALKEY_VERSION: "9.0"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build image and start Valkey with the module
+        run: docker compose up -d --build
+
+      - name: Wait for the server
+        run: |
+          for _ in $(seq 1 60); do
+            if [ "$(docker compose exec -T valkey valkey-cli PING 2>/dev/null)" = "PONG" ]; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker compose logs
+          exit 1
+
+      - name: Integration suite
+        run: bash tests/integration.sh
+
+      - name: Server logs on failure
+        if: failure()
+        run: docker compose logs
+
   coverage:
     name: Unit-layer coverage
     runs-on: ubuntu-latest
