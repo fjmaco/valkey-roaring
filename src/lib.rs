@@ -14,6 +14,7 @@ use valkey_module::{
     ValkeyValue,
 };
 
+mod base64;
 mod bitmap32;
 mod bitmap64;
 mod bitmap_type;
@@ -21,6 +22,7 @@ mod canonical;
 mod commands;
 mod commands_bitop;
 mod error;
+mod limits;
 mod parse;
 #[cfg(test)]
 mod proptests;
@@ -32,6 +34,7 @@ use bitmap_type::RoaringType;
 /// Internal surface exposed only for the fuzz targets in `fuzz/`.
 #[cfg(feature = "fuzzing")]
 pub mod fuzzing {
+    pub use crate::base64::{decode as base64_decode, encode as base64_encode};
     pub use crate::bitmap_type::RoaringType;
     pub use crate::commands_bitop::{op_and, op_andnot, op_andor, op_one, op_or, op_ornot, op_xor};
 }
@@ -317,10 +320,11 @@ fn run(ctx: &Context, handler: impl FnOnce() -> ValkeyResult) -> ValkeyResult {
 /// Writes signal key modification explicitly (commands::key_changed) and
 /// only when data actually changed, so no-op writes don't invalidate WATCH
 /// or client-side caches. Without this option every key opened for write
-/// is signalled on close, changed or not.
+/// is signalled on close, changed or not. The reply and write limits are
+/// registered as module configuration parameters (limits.rs).
 fn init(ctx: &Context, _args: &[ValkeyString]) -> Status {
     ctx.set_module_options(ModuleOptions::NO_IMPLICIT_SIGNAL_MODIFIED);
-    Status::Ok
+    limits::register(ctx)
 }
 
 // ============================================================

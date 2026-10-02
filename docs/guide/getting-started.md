@@ -34,6 +34,11 @@ Or in `valkey.conf`:
 loadmodule /path/to/libvalkey_roaring.so
 ```
 
+The module's two limits — the largest reply that lists values and the
+largest range one write may build — are module configuration parameters,
+settable on these lines or later with `CONFIG SET`; see
+[Configuration](/guide/configuration).
+
 ## Using Redis instead of Valkey
 
 The module initializes through the RedisModule API, which both servers expose,

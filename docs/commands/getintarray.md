@@ -19,7 +19,7 @@ Array of integers in ascending order; empty array for a missing key. 64-bit valu
 ## Notes
 
 - For large bitmaps prefer [RANGEINTARRAY](/commands/rangeintarray) pagination or a binary [EXPORT](/commands/export).
-- A bitmap of more than 100,000,000 values is refused with `Roaring: range too large: maximum 100000000 elements` before any reply is written (an `R.SETFULL` key would otherwise stream 2³² values). This is by design: page through such a bitmap with [RANGEINTARRAY](/commands/rangeintarray), up to 100,000,000 positions per call.
+- A bitmap of more than `valkey-roaring.max-reply-elements` values (100,000,000 by default) is refused with `Roaring: range too large: maximum 100000000 elements` (or the configured value) before any reply is written (an `R.SETFULL` key would otherwise stream 2³² values). This is by design: page through such a bitmap with [RANGEINTARRAY](/commands/rangeintarray), up to that many positions per call (see [Configuration](/guide/configuration)).
 
 ## Example
 

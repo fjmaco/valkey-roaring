@@ -1,7 +1,9 @@
 //! valkey-roaring: Generic command handlers parameterized by RoaringType.
 
+use crate::base64;
 use crate::bitmap_type::{decode_exact, RoaringType};
 use crate::error::*;
+use crate::limits::{self, check_memory, check_write_values, range_too_large, range_write_bytes};
 use crate::parse::*;
 use std::ffi::CString;
 use std::os::raw::c_long;
@@ -468,8 +470,9 @@ pub fn handle_getintarray<T: RoaringType>(
             // near the top of the range) would stream billions of elements
             // into the reply buffer until the server is killed.
             let card = bitmap.len();
-            if card > MAX_RANGE_SIZE {
-                return Err(ValkeyError::Str(ERR_RANGE_TOO_LARGE));
+            let cap = limits::max_reply_elements();
+            if card > cap {
+                return Err(range_too_large(cap));
             }
             reply_value_array::<T>(ctx, card, bitmap.iter_values())
         }
@@ -558,14 +561,13 @@ pub fn handle_rangeintarray<T: RoaringType>(
     // is refused (upstream would try to list billions of values; its 64-bit
     // variant fails the allocation and replies "ERR out of memory" instead).
     let full_width = start == 0 && end == T::value_to_u64(T::MAX_VALUE);
-    if end - start >= MAX_RANGE_SIZE && !full_width {
-        return Err(ValkeyError::Str(ERR_RANGE_TOO_LARGE));
+    let cap = limits::max_reply_elements();
+    if end - start >= cap && !full_width {
+        return Err(range_too_large(cap));
     }
 
     match bitmap {
-        Some(bitmap) if full_width && bitmap.len() > MAX_RANGE_SIZE => {
-            Err(ValkeyError::Str(ERR_RANGE_TOO_LARGE))
-        }
+        Some(bitmap) if full_width && bitmap.len() > cap => Err(range_too_large(cap)),
         Some(bitmap) => {
             // One select for the first position, then a plain walk: select
             // costs a pass over the containers, so calling it per element
@@ -627,8 +629,9 @@ pub fn handle_getbitarray<T: RoaringType>(
             // The reply is max+1 bytes; refuse instead of risking an
             // allocation-failure abort on huge maxima (upstream crashes).
             let max = bitmap.max_val().map_or(0, T::value_to_u64);
-            if max >= MAX_RANGE_SIZE {
-                return Err(ValkeyError::Str(ERR_RANGE_TOO_LARGE));
+            let cap = limits::max_reply_elements();
+            if max >= cap {
+                return Err(range_too_large(cap));
             }
             // An empty bitmap reads "0", as upstream's max-plus-one string.
             let bits = match bitmap.max_val() {
@@ -662,8 +665,11 @@ pub fn handle_setrange<T: RoaringType>(
     if end < start {
         return Err(ValkeyError::Str(T::ERR_END_BEFORE_START));
     }
-    if T::value_to_u64(end) - T::value_to_u64(start) > MAX_STORED_RANGE {
-        return Err(ValkeyError::Str(ERR_STORED_RANGE_TOO_LARGE));
+    let (first, end_u64) = (T::value_to_u64(start), T::value_to_u64(end));
+    check_write_values(ctx, end_u64 - first)?;
+    // Before the key is created: a refused write leaves nothing behind.
+    if end_u64 > first {
+        check_memory(ctx, range_write_bytes(first, end_u64 - 1))?;
     }
 
     let (bitmap, created) = get_or_create::<T>(&key, vtype)?;
@@ -701,9 +707,9 @@ pub fn handle_setfull<T: RoaringType>(
     }
     // R.SETFULL (2^32 values) is stored as 65,536 run containers; the full
     // 64-bit space cannot be stored at all.
-    if T::value_to_u64(T::MAX_VALUE) >= MAX_STORED_RANGE {
-        return Err(ValkeyError::Str(ERR_STORED_RANGE_TOO_LARGE));
-    }
+    let last = T::value_to_u64(T::MAX_VALUE);
+    check_write_values(ctx, last.saturating_add(1))?;
+    check_memory(ctx, range_write_bytes(0, last))?;
 
     let bm = T::full();
     key.set_value(vtype, bm)?;
@@ -932,6 +938,23 @@ pub fn handle_diff<T: RoaringType>(
 }
 
 // ============================================================
+// Blob encodings for EXPORT / IMPORT
+// ============================================================
+/// The optional trailing token of EXPORT and IMPORT selecting the Base64
+/// text form of the blob, so it can be typed or pasted as an argument.
+/// Matched exactly, like every token; anything else is a syntax error.
+const BASE64_TOKEN: &[u8] = b"BASE64";
+
+/// Whether an optional encoding argument asks for Base64.
+fn wants_base64(arg: Option<&ValkeyString>) -> Result<bool, ValkeyError> {
+    match arg.map(ValkeyString::as_slice) {
+        None => Ok(false),
+        Some(BASE64_TOKEN) => Ok(true),
+        Some(_) => Err(ValkeyError::Str(ERR_SYNTAX)),
+    }
+}
+
+// ============================================================
 // R.EXPORT / R64.EXPORT
 // ============================================================
 pub fn handle_export<T: RoaringType>(
@@ -939,7 +962,7 @@ pub fn handle_export<T: RoaringType>(
     args: Vec<ValkeyString>,
     vtype: &ValkeyType,
 ) -> ValkeyResult {
-    if args.len() != 2 {
+    if args.len() < 2 || args.len() > 3 {
         return Err(ValkeyError::WrongArity);
     }
     let key = ctx.open_key_writable(&args[1]);
@@ -947,6 +970,8 @@ pub fn handle_export<T: RoaringType>(
         Some(bm) => bm,
         None => return Err(ValkeyError::Str(ERR_KEY_NOT_FOUND)),
     };
+    // The key is looked at before the argument, as everywhere else.
+    let as_text = wants_base64(args.get(2))?;
 
     // The blob is canonical: one set, one byte sequence, whatever writes
     // built it (consumers may hash or dedupe blobs). Getting there optimizes
@@ -957,7 +982,13 @@ pub fn handle_export<T: RoaringType>(
         .export_canonical()
         .map_err(|_| ValkeyError::Str("ERR serialization failed"))?;
 
-    Ok(ValkeyValue::StringBuffer(buf))
+    // Base64 of the canonical blob is canonical too: strict decoding admits
+    // one text per blob.
+    Ok(ValkeyValue::StringBuffer(if as_text {
+        base64::encode(&buf)
+    } else {
+        buf
+    }))
 }
 
 // ============================================================
@@ -968,15 +999,25 @@ pub fn handle_import<T: RoaringType>(
     args: Vec<ValkeyString>,
     vtype: &ValkeyType,
 ) -> ValkeyResult {
-    if args.len() != 3 {
+    if args.len() < 3 || args.len() > 4 {
         return Err(ValkeyError::WrongArity);
     }
+    // The blob as sent, or decoded from its Base64 text: the text form is
+    // strict (one text per blob), and text that is not Base64 is bad data
+    // like any other. The command replicates and reaches the AOF verbatim,
+    // text and token included, and replays through this same path.
+    let decoded;
+    let data = if wants_base64(args.get(3))? {
+        decoded = base64::decode(args[2].as_slice()).ok_or(ValkeyError::Str(ERR_BAD_BINARY))?;
+        &decoded[..]
+    } else {
+        args[2].as_slice()
+    };
     // One complete, valid blob: trailing bytes, malformed containers and
     // (64-bit) repeated or decreasing high words are refused, never dropped
     // or truncated. Replayed or replicated commands may still carry what
     // 1.1.1 accepted, and are decoded as it decoded them (see
     // from_aof_or_primary).
-    let data = args[2].as_slice();
     let new_bitmap = match decode_exact::<T>(data) {
         Ok(bm) => bm,
         Err(_) if from_aof_or_primary(ctx) => {

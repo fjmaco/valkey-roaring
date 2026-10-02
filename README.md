@@ -15,7 +15,7 @@ Built in Rust on the official [valkey-module](https://crates.io/crates/valkey-mo
 
 - **Valkey and Redis compatible** — one `.so` loads on Valkey 8.1+ and Redis 7.4/8, with full functionality and RDB persistence on both
 - **Two value ranges** — 32-bit (`R.*`, values 0 to 2³²−1) and 64-bit (`R64.*`, values 0 to 2⁶⁴−1) bitmap types with identical command semantics
-- **Binary export/import** — `R.EXPORT` / `R.IMPORT` serialize to the CRoaring portable format for efficient cross-service transfer
+- **Binary export/import** — `R.EXPORT` / `R.IMPORT` serialize to the CRoaring portable format for efficient cross-service transfer, raw or as Base64 text
 - **8 bitwise operations** — AND, OR, XOR, NOT, ANDOR, DIFF, DIFF1, ONE, cluster-aware key reporting included
 - **RDB persistence** — bitmaps survive `BGSAVE` and server restarts
 - **Container statistics** — `R.STAT` reports cardinality, min/max, and the full array/bitset/run container breakdown for both widths
@@ -105,7 +105,7 @@ All commands exist in 32-bit (`R.*`) and 64-bit (`R64.*`) forms. The `R.*` varia
 - `R.GETINTARRAY key` — Get all set bits as sorted integer array
 - `R.APPENDINTARRAY key val [val ...]` — Add integers to bitmap
 - `R.DELETEINTARRAY key val [val ...]` — Remove integers from bitmap
-- `R.RANGEINTARRAY key start end` — Paginate the sorted value array: elements at 0-based positions [start, end], truncated at the cardinality (max window 100,000,000)
+- `R.RANGEINTARRAY key start end` — Paginate the sorted value array: elements at 0-based positions [start, end], truncated at the cardinality (max window 100,000,000 by default, see [Limits and configuration](#limits-and-configuration))
 
 ### Bit Array
 
@@ -158,20 +158,26 @@ All BITOP operations return the cardinality of the result.
 
 ### Export / Import
 
-- `R.EXPORT key` — Serialize to CRoaring portable binary format
-- `R.IMPORT key binary` — Deserialize and OR-merge into key, returns cardinality after import
+- `R.EXPORT key [BASE64]` — Serialize to CRoaring portable binary format (as Base64 text with `BASE64`)
+- `R.IMPORT key binary [BASE64]` — Deserialize and OR-merge into key, returns cardinality after import (`binary` is Base64 text with `BASE64`)
 
 The binary output of `R.EXPORT` is compatible with any [CRoaring-compatible library](#croaring-compatible-libraries) (Java, Go, Python, C++, Rust). This is the recommended way to transfer bitmaps between services.
 
 `R.EXPORT` is canonical: one set always exports the same bytes, whatever sequence of writes built it, so consumers can hash or dedupe blobs. It counts as a read — it never invalidates `WATCH` or client-side caching and is not replicated. `R.IMPORT` rejects malformed blobs with `ERR bad binary data for roaring`, including the oversized array containers some producers emit (Go roaring v1.9.4's `FastOr`/`ParOr`).
 
-From a shell, use `valkey-cli`'s raw output and `-x` (both are binary-safe;
-pasting binary as a command argument is not):
+From a shell, use `valkey-cli`'s raw output and `-x` (both are binary-safe),
+or the `BASE64` form, whose text can be pasted as an argument:
 
 ```bash
 valkey-cli R.EXPORT source > bitmap.bin        # raw reply redirected to a file
 valkey-cli -x R.IMPORT destination < bitmap.bin  # -x passes stdin as the last arg
+
+valkey-cli R.EXPORT source BASE64              # "OjAAAAEAAAAAAAEAEAAAACoAZAA="
+valkey-cli R.IMPORT destination OjAAAAEAAAAAAAEAEAAAACoAZAA= BASE64
 ```
+
+The text is standard Base64 (RFC 4648 alphabet, `=` padding), decoded
+strictly: anything else is `ERR bad binary data for roaring`.
 
 From Lua:
 
@@ -194,6 +200,32 @@ All commands above have 64-bit equivalents with the `R64.` prefix:
 `R.STAT` is shared — it auto-detects whether the key is 32-bit or 64-bit.
 
 **Total: 51 commands** (25 `R.*` + 25 `R64.*` + 1 `R.STAT`)
+
+### Limits and configuration
+
+Two module configuration parameters bound what one command may do. Set
+them after the `loadmodule` line in `valkey.conf`, as
+`--valkey-roaring.<name> <value>` on the command line, or at runtime with
+`CONFIG SET`:
+
+| Parameter | Default | Allowed values | Bounds |
+|-----------|---------|----------------|--------|
+| `valkey-roaring.max-reply-elements` | 100000000 | 1 to 4294967296 | elements listed by `GETINTARRAY`, `RANGEINTARRAY`, `GETBITARRAY` |
+| `valkey-roaring.max-write-values` | 274877906944 (2³⁸) | 1 to 274877906944 | contiguous values built by one `SETRANGE`, `SETFULL` or `BITOP NOT` |
+
+Past either limit a command replies
+`Roaring: range too large: maximum <value> elements` and changes nothing.
+The write limit's default is also its ceiling: 2³⁸ values are 4,194,304
+full containers, about 200 MB stored as runs; the whole 32-bit space
+(`R.SETFULL`, about 3 MB) fits well within it. Writes replayed from the AOF
+or received from a primary are applied even when this server's limit is
+lower.
+
+With `maxmemory` set, a range write whose estimated result would push used
+memory past `maxmemory` is refused up front with the server's
+`OOM command not allowed when used memory > 'maxmemory'.` (under an
+eviction policy, only a write larger than `maxmemory` itself). See the
+[configuration guide](https://fjmaco.github.io/valkey-roaring/guide/configuration).
 
 ## API Example
 
@@ -248,8 +280,10 @@ OK
 2) (integer) 4
 3) (integer) 5
 
-# export bitmap as portable binary (for cross-service transfer)
-# use from a client library, not valkey-cli (binary contains null bytes)
+# export bitmap as portable binary (for cross-service transfer); from
+# valkey-cli, as Base64 text (the raw blob contains null bytes)
+127.0.0.1:6379> R.EXPORT users:active BASE64
+"OjAAAAEAAAAAAAEAEAAAACoAewA="
 
 # get statistics
 127.0.0.1:6379> R.STAT users:active
@@ -274,6 +308,9 @@ src/
   bitmap64.rs         impl RoaringType for RoaringTreemap (u64)
   commands.rs         Generic command handlers
   commands_bitop.rs   BITOP dispatch + 8 sub-operations
+  canonical.rs        Canonical EXPORT encoding
+  limits.rs           Configurable limits, maxmemory check for range writes
+  base64.rs           Strict Base64 for EXPORT/IMPORT ... BASE64
   error.rs            Error constants
   parse.rs            Argument parsing
 ```
@@ -310,7 +347,7 @@ Every command runs inside a panic guard. If a bug in the module or in roaring-rs
 
 Three layers, all run by CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and pull request, alongside `rustfmt`/`clippy` gates and a unit-layer coverage report. The [benchmark workflow](.github/workflows/benchmark.yml) refreshes the table below whenever performance-relevant code changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for running the gates locally.
 
-**Unit and property tests** (no server needed) — 95 tests covering every
+**Unit and property tests** (no server needed) — 107 tests covering every
 hand-written algorithm:
 
 ```bash
@@ -344,12 +381,17 @@ cargo test
   replayed commands
 - Cost guards: canonical EXPORT and interleaved unions stay linear, and an
   R64 SETRANGE check on a million-container key does not walk the key
+- Base64 against RFC 4648 vectors and an independent bit-by-bit encoder;
+  strict decoding (every padding bit pattern, stray characters) and
+  decode-then-encode identity over 50,000 random texts
+- Limits: default refusal texts byte for byte, config bounds, and the
+  range-write memory estimate against the heap model
 
 The coverage badge reports the unit/property layer only; the command
 handlers it cannot instrument are exercised by the integration suite below
 (see `codecov.yml` for the scoping rationale).
 
-**Integration suite** — 432 assertions against a live Valkey instance:
+**Integration suite** — 496 assertions against a live Valkey instance:
 
 ```bash
 # From the repository root (requires running docker compose)
@@ -369,7 +411,14 @@ bash tests/integration.sh
   texts, case-sensitive tokens, JACCARD and STAT reply types (checked through
   Lua under RESP2 and RESP3), full-width and 64-bit pagination
 - Limits: oversized GETINTARRAY, `R64.SETFULL`, wide `R64.SETRANGE` and
-  `R64.BITOP NOT` refused up front, the full 32-bit space still accepted
+  `R64.BITOP NOT` refused up front, the full 32-bit space still accepted;
+  both limits changed with `CONFIG SET` and enforced at their boundaries,
+  out-of-range values refused; a replica and an AOF replay with a lower
+  write limit still apply the primary's writes
+- maxmemory: range writes that would cross it refused with the OOM error
+  and nothing created, under `noeviction` and under `allkeys-lru`
+- Base64 EXPORT/IMPORT: known texts, round trips on both widths, strict
+  decoding, exact tokens, arity, replication and AOF replay
 - IMPORT validation: trailing bytes and non-increasing 64-bit high words
 - Upgrade safety: an AOF holding commands only 1.1.1 accepted (lenient IMPORT
   blobs, `+5`/`007`/`01`, lowercase BITOP) replays to 1.1.1's sets, while
@@ -383,7 +432,7 @@ targets run 60s each on every push/PR and 10 minutes nightly, with a
 persistent corpus cached between runs:
 
 ```bash
-cargo +nightly fuzz run import_bytes      # untrusted bytes into the R.IMPORT path
+cargo +nightly fuzz run import_bytes      # untrusted bytes into the R.IMPORT path, raw and Base64
 cargo +nightly fuzz run parity_ops        # 32-bit vs 64-bit behavioral parity
 cargo +nightly fuzz run bitop_kernels     # BITOP kernels vs a naive reference
 cargo +nightly fuzz run export_canonical  # imported encodings still export one canonical blob
@@ -392,12 +441,14 @@ cargo +nightly fuzz run export_canonical  # imported encodings still export one 
 **Performance benchmark** — see [Performance](#performance); CI runs a smoke
 subset on every push.
 
-**External validation** — nineteen end-to-end suites (two of them, load/soak
-and very large keys, run only on request) live in a separate repository,
+**External validation** — twenty-four end-to-end suites (three of them,
+load/soak, very large keys and the 1.1.1 upgrade path, run only on request)
+live in a separate repository,
 [fjmaco/-valkey-roaring-testing](https://github.com/fjmaco/-valkey-roaring-testing):
 real-dataset semantics against a reference model, CRoaring interop,
 replication, cluster, torture, workflow contracts, canonical EXPORT, write
-signals, streamed replies and memory accounting. They are kept out of this tree deliberately — they
+signals, streamed replies, memory accounting, configurable limits, the
+maxmemory check and Base64 blobs. They are kept out of this tree deliberately — they
 validate the module the way an outside consumer would, through the wire
 protocol, the Docker image and the published binary format only, and share
 no code with it. That is also where new end-to-end tests belong.
@@ -484,8 +535,7 @@ The binary format produced by `R.EXPORT` / `R.IMPORT` is the standard CRoaring p
 
 ## Known Limitations
 
-- **Size limits.** One write builds at most 2³⁸ contiguous values (4,194,304 full containers, about 200 MB as runs, about 0.1 s; the bound is per call, so one write can take up to about 200 MB past `maxmemory` before `deny-oom` refuses further writes): `R64.SETFULL`, wider `R64.SETRANGE` calls and `R64.BITOP NOT` over a universe past 2³⁸ are refused with `Roaring: range too large: maximum 274877906944 elements` instead of allocating until the server is killed. The whole 32-bit space is within the limit (`R.SETFULL`, about 3 MB). Replies that list values (`GETINTARRAY`, `RANGEINTARRAY`, `GETBITARRAY`) are capped at 100,000,000 elements.
-- **`R.EXPORT` / `R.IMPORT`** binaries cannot be pasted as command arguments; use `valkey-cli -x` / raw output redirection, Lua, or a client library (see [Export / Import](#export--import)).
+- **The full 64-bit space cannot be stored.** `R64.SETFULL` would need 2³² full 32-bit sub-bitmaps (2⁴⁸ containers), so it is always refused (`Roaring: range too large: maximum 274877906944 elements` by default). Use `R64.SETRANGE` over the range you actually need.
 
 ## Acknowledgements
 

@@ -853,6 +853,77 @@ assert_eq "server alive after the limits" "PONG" "$(run PING)"
 run DEL lfull lsr lnot lnot32 lbig > /dev/null
 
 # -------------------------------------------------------
+echo "=== CONFIGURABLE LIMITS ==="
+# Both limits are module configs; the refusal names the configured value.
+MRE=valkey-roaring.max-reply-elements
+MWV=valkey-roaring.max-write-values
+assert_eq "max-reply-elements defaults to 100M" "$(printf "$MRE\n100000000")" "$(run CONFIG GET $MRE)"
+assert_eq "max-write-values defaults to 2^38" "$(printf "$MWV\n274877906944")" "$(run CONFIG GET $MWV)"
+run R.SETINTARRAY cfgk 1 2 3 4 > /dev/null
+run R64.SETINTARRAY cfgk64 1 2 3 4 > /dev/null
+assert_eq "CONFIG SET max-reply-elements" "OK" "$(run CONFIG SET $MRE 4)"
+assert_eq "GETINTARRAY at the cap" "$(printf '1\n2\n3\n4')" "$(run R.GETINTARRAY cfgk)"
+run CONFIG SET $MRE 3 > /dev/null
+assert_eq "GETINTARRAY past a lowered cap" "Roaring: range too large: maximum 3 elements" "$(run R.GETINTARRAY cfgk)"
+assert_eq "R64.GETINTARRAY past a lowered cap" "Roaring: range too large: maximum 3 elements" "$(run R64.GETINTARRAY cfgk64)"
+assert_eq "RANGEINTARRAY window at the cap" "$(printf '1\n2\n3')" "$(run R.RANGEINTARRAY cfgk 0 2)"
+assert_eq "RANGEINTARRAY window past the cap" "Roaring: range too large: maximum 3 elements" "$(run R.RANGEINTARRAY cfgk 0 3)"
+assert_eq "full-width RANGEINTARRAY past the cap" "Roaring: range too large: maximum 3 elements" "$(run R.RANGEINTARRAY cfgk 0 4294967295)"
+assert_eq "GETBITARRAY with a maximum at the cap" "Roaring: range too large: maximum 3 elements" "$(run R.GETBITARRAY cfgk)"
+run R.SETINTARRAY cfgsmall 0 2 > /dev/null
+assert_eq "GETBITARRAY under the cap" "101" "$(run R.GETBITARRAY cfgsmall)"
+assert_contains "max-reply-elements below 1 refused" "between 1 and 4294967296" "$(run CONFIG SET $MRE 0)"
+assert_contains "max-reply-elements above 2^32 refused" "between 1 and 4294967296" "$(run CONFIG SET $MRE 4294967297)"
+assert_eq "max-reply-elements up to 2^32" "OK" "$(run CONFIG SET $MRE 4294967296)"
+assert_eq "CONFIG SET max-write-values" "OK" "$(run CONFIG SET $MWV 1000)"
+assert_eq "SETRANGE of exactly the limit" "OK" "$(run R.SETRANGE cfgw 0 1000)"
+assert_eq "SETRANGE past a lowered limit" "Roaring: range too large: maximum 1000 elements" "$(run R.SETRANGE cfgw 0 1001)"
+assert_eq "R64.SETRANGE past a lowered limit" "Roaring: range too large: maximum 1000 elements" "$(run R64.SETRANGE cfgw64 5000000000 5000001001)"
+assert_eq "BITOP NOT universe of exactly the limit" "1000" "$(run R.BITOP NOT cfgn cfgmissing 999)"
+assert_eq "BITOP NOT universe past a lowered limit" "Roaring: range too large: maximum 1000 elements" "$(run R.BITOP NOT cfgn cfgmissing 1000)"
+assert_eq "R.SETFULL past a lowered limit" "Roaring: range too large: maximum 1000 elements" "$(run R.SETFULL cfgf)"
+assert_eq "  ... nothing stored" "0" "$(run EXISTS cfgf)"
+assert_contains "max-write-values below 1 refused" "between 1 and 274877906944" "$(run CONFIG SET $MWV 0)"
+assert_contains "max-write-values above 2^38 refused" "between 1 and 274877906944" "$(run CONFIG SET $MWV 274877906945)"
+run CONFIG SET $MRE 100000000 > /dev/null
+run CONFIG SET $MWV 274877906944 > /dev/null
+assert_eq "defaults restored: reply text unchanged" "Roaring: range too large: maximum 100000000 elements" "$(run R.RANGEINTARRAY cfgk 0 200000000)"
+assert_eq "defaults restored: write text unchanged" "$R238" "$(run R64.SETRANGE cfgw64 0 274877906945)"
+run DEL cfgk cfgk64 cfgsmall cfgw cfgn > /dev/null
+
+# -------------------------------------------------------
+echo "=== MAXMEMORY CHECK ==="
+# A range write whose estimated result would push used memory past
+# maxmemory is refused up front with the server's OOM error, instead of
+# allocating up to ~200 MB past the limit. Under an eviction policy the
+# server makes room afterwards, so only a write larger than maxmemory
+# itself is refused.
+run FLUSHALL > /dev/null
+OOM="OOM command not allowed when used memory > 'maxmemory'."
+used_memory() { run INFO memory | grep '^used_memory:' | cut -d: -f2 | tr -d '\r'; }
+saved_policy=$(run CONFIG GET maxmemory-policy | tail -1)
+run CONFIG SET maxmemory $(( $(used_memory) + 50 * 1048576 )) > /dev/null
+assert_eq "R64.SETRANGE of 2^38 values (~200 MB) refused" "$OOM" "$(run R64.SETRANGE mmbig 0 274877906944)"
+assert_eq "  ... nothing created" "0" "$(run EXISTS mmbig)"
+assert_eq "R64.BITOP NOT over 2^38 values refused" "$OOM" "$(run R64.BITOP NOT mmnot mmmissing 274877906943)"
+assert_eq "  ... destination untouched" "0" "$(run EXISTS mmnot)"
+assert_eq "R.SETFULL (3 MB) fits" "OK" "$(run R.SETFULL mmfull)"
+assert_eq "R64.SETRANGE of 2^33 values (6 MB) fits" "OK" "$(run R64.SETRANGE mmmid 0 8589934592)"
+# Fill to ~25 MB with evictable keys, then leave 5 MB of headroom.
+for i in 1 2 3 4 5 6; do run R.SETFULL mmfill$i > /dev/null; done
+run CONFIG SET maxmemory $(( $(used_memory) + 5 * 1048576 )) > /dev/null
+assert_eq "noeviction: 24 MB with 5 MB of headroom refused" "$OOM" "$(run R64.SETRANGE mm24 0 34359738368)"
+assert_eq "noeviction: a small write still works" "OK" "$(run R64.SETRANGE mmsmall 0 1000)"
+run CONFIG SET maxmemory-policy allkeys-lru > /dev/null
+assert_eq "allkeys-lru: 24 MB accepted, the server evicts to make room" "OK" "$(run R64.SETRANGE mm24 0 34359738368)"
+assert_eq "allkeys-lru: a write larger than maxmemory itself refused" "$OOM" "$(run R64.SETRANGE mmbig 0 274877906944)"
+run CONFIG SET maxmemory 0 > /dev/null
+run CONFIG SET maxmemory-policy "$saved_policy" > /dev/null
+run FLUSHALL > /dev/null
+assert_eq "no maxmemory: no check (R64.SETRANGE of 2^35 values)" "OK" "$(run R64.SETRANGE mm24 0 34359738368)"
+run DEL mm24 > /dev/null
+
+# -------------------------------------------------------
 echo "=== IMPORT VALIDATION ==="
 # A blob must be exactly one valid bitmap: trailing bytes and 64-bit blobs
 # whose high words do not strictly increase are refused, never truncated
@@ -870,6 +941,39 @@ assert_eq "R64.IMPORT rejects trailing bytes" "$BAD" "$(run EVAL "$B64; return r
 assert_eq "  ... nothing stored" "0" "$(run EXISTS v64)"
 assert_eq "R64.IMPORT accepts increasing high words" "6" "$(run EVAL "$B64; return redis.call('R64.IMPORT', KEYS[2], two .. hi(1) .. s .. hi(3) .. s)" 2 vsrc v64)"
 assert_eq "  ... under both high words" "$(printf '4294967297\n12884901889')" "$(run R64.RANGEINTARRAY v64 0 0; run R64.RANGEINTARRAY v64 3 3)"
+
+# -------------------------------------------------------
+echo "=== BASE64 BLOBS ==="
+# EXPORT key BASE64 / IMPORT key text BASE64: the blob as Base64 text, so it
+# can be pasted as an argument. Without the token nothing changes.
+run R.SETINTARRAY b64a 1 2 > /dev/null
+run R64.SETINTARRAY b64a64 1 2 > /dev/null
+assert_eq "R.EXPORT BASE64 of {1,2}" "OjAAAAEAAAAAAAEAEAAAAAEAAgA=" "$(run R.EXPORT b64a BASE64)"
+assert_eq "R64.EXPORT BASE64 of {1,2}" "AQAAAAAAAAAAAAAAOjAAAAEAAAAAAAEAEAAAAAEAAgA=" "$(run R64.EXPORT b64a64 BASE64)"
+run R.SETINTARRAY b64big 1 2 70000 4294967295 > /dev/null
+run R.SETRANGE b64big 100 200000 > /dev/null
+assert_eq "BASE64 is the raw blob's Base64" "$(run R.EXPORT b64big | head -c -1 | base64 -w0)" "$(run R.EXPORT b64big BASE64)"
+assert_eq "R.IMPORT BASE64 round trip" "199903" "$(run R.IMPORT b64copy "$(run R.EXPORT b64big BASE64)" BASE64)"
+assert_eq "  ... equal sets" "1" "$(run R.CONTAINS b64copy b64big EQ)"
+assert_eq "R64.IMPORT BASE64 round trip" "2" "$(run R64.IMPORT b64copy64 AQAAAAAAAAAAAAAAOjAAAAEAAAAAAAEAEAAAAAEAAgA= BASE64)"
+assert_eq "  ... values" "$(printf '1\n2')" "$(run R64.GETINTARRAY b64copy64)"
+run R.SETINTARRAY b64merge 2 3 9 > /dev/null
+assert_eq "IMPORT BASE64 OR-merges" "4" "$(run R.IMPORT b64merge OjAAAAEAAAAAAAEAEAAAAAEAAgA= BASE64)"
+assert_eq "invalid Base64 (no padding) is bad data" "$BAD" "$(run R.IMPORT b64bad OjAAAAEAAAAAAAEAEAAAAAEAAgA BASE64)"
+assert_eq "invalid Base64 (nonzero padding bits) is bad data" "$BAD" "$(run R.IMPORT b64bad OjAAAAEAAAAAAAEAEAAAAAEAAgB= BASE64)"
+assert_eq "invalid Base64 (URL-safe alphabet) is bad data" "$BAD" "$(run R64.IMPORT b64bad AQAAAAAAAAAAAAAAOjAAAAEAAAAAAAEAEAAAAAEAAgA_ BASE64)"
+assert_eq "valid Base64 of a non-blob is bad data" "$BAD" "$(run R.IMPORT b64bad bm90YXJvYXJpbmdibG9i BASE64)"
+assert_eq "  ... nothing stored" "0" "$(run EXISTS b64bad)"
+assert_eq "the raw blob without the token is unchanged" "$BAD" "$(run R.IMPORT b64bad OjAAAAEAAAAAAAEAEAAAAAEAAgA=)"
+assert_eq "EXPORT token is case-sensitive" "ERR syntax error" "$(run R.EXPORT b64a base64)"
+assert_eq "IMPORT token is case-sensitive" "ERR syntax error" "$(run R64.IMPORT b64bad AQAAAAAAAAAAAAAAOjAAAAEAAAAAAAEAEAAAAAEAAgA= base64)"
+assert_eq "  ... nothing stored" "0" "$(run EXISTS b64bad)"
+assert_eq "EXPORT checks the key before the token" "Roaring: key does not exist" "$(run R.EXPORT b64missing NOPE)"
+assert_contains "EXPORT BASE64 of a wrong-type key" "WRONGTYPE" "$(run SET b64str x > /dev/null; run R.EXPORT b64str BASE64)"
+assert_contains "EXPORT with two extra arguments" "wrong number of arguments" "$(run R.EXPORT b64a BASE64 BASE64)"
+assert_contains "IMPORT with two extra arguments" "wrong number of arguments" "$(run R.IMPORT b64a x BASE64 BASE64)"
+assert_eq "IMPORT BASE64 reports one key" "b64k" "$(run COMMAND GETKEYS R.IMPORT b64k OjAAAAEAAAAAAAEAEAAAAAEAAgA= BASE64)"
+run DEL b64a b64a64 b64big b64copy b64copy64 b64merge b64str > /dev/null
 
 echo "=== NO-OP WRITES ==="
 # Writes that change nothing must not replicate, hit the AOF or count toward
@@ -891,6 +995,7 @@ assert_eq "no-op CLEAR on an empty key replies 0" "0" "$(run R.CLEAR nopempty)"
 assert_eq "no-op R64.SETBIT replies 1" "1" "$(run R64.SETBIT nop64 5000000000 1)"
 assert_eq "no-op R64.SETRANGE replies OK" "OK" "$(run R64.SETRANGE nop64 5 6)"
 run EVAL "return redis.call('R.IMPORT', KEYS[1], redis.call('R.EXPORT', KEYS[1]))" 1 nop > /dev/null
+run R.IMPORT nop "$(run R.EXPORT nop BASE64)" BASE64 > /dev/null
 run R.EXPORT nop > /dev/null
 run R.GETINTARRAY nop > /dev/null
 assert_eq "no-op writes and reads leave the dirty counter alone" "$before" "$(dirty)"
@@ -910,7 +1015,7 @@ IMG=$(docker inspect -f '{{.Config.Image}}' "$PRIMARY_CID")
 docker rm -f vr-test-replica > /dev/null 2>&1 || true
 docker run -d --rm --name vr-test-replica --network "$NET" "$IMG" \
   valkey-server --loadmodule /usr/lib/valkey/modules/libvalkey_roaring.so \
-  --replicaof valkey 6379 > /dev/null
+  --replicaof valkey 6379 --valkey-roaring.max-write-values 1000 > /dev/null
 RCLI="docker exec vr-test-replica valkey-cli"
 for _ in $(seq 1 30); do
   if $RCLI INFO replication 2>/dev/null | grep -q "master_link_status:up"; then break; fi
@@ -921,6 +1026,8 @@ run R64.SETINTARRAY repl64 5 6 7 > /dev/null
 run R.BITOP NOT repldest repl32 > /dev/null
 run R.SETINTARRAY repldel 1 2 3 > /dev/null
 run R.DELETEINTARRAY repldel 2 > /dev/null
+run R.SETRANGE replrange 0 100000 > /dev/null
+run R64.IMPORT replb64 AQAAAAAAAAAAAAAAOjAAAAEAAAAAAAEAEAAAAAEAAgA= BASE64 > /dev/null
 sleep 2
 assert_eq "replica got R.SETBIT" "1" "$($RCLI R.GETBIT repl32 42)"
 assert_eq "replica got R64.SETINTARRAY" "3" "$($RCLI R64.BITCOUNT repl64)"
@@ -928,6 +1035,8 @@ assert_eq "replica got BITOP dest" "42" "$($RCLI R.BITCOUNT repldest)"
 result=$($RCLI R.GETINTARRAY repldel)
 expected=$(printf "1\n3")
 assert_eq "replica got DELETEINTARRAY effect" "$expected" "$result"
+assert_eq "replica with a lower max-write-values still applies the primary's SETRANGE" "100000" "$($RCLI R.BITCOUNT replrange)"
+assert_eq "replica got R64.IMPORT ... BASE64" "$(printf '1\n2')" "$($RCLI R64.GETINTARRAY replb64)"
 docker rm -f vr-test-replica > /dev/null 2>&1 || true
 
 # -------------------------------------------------------
@@ -935,16 +1044,23 @@ echo "=== AOF PERSISTENCE ==="
 docker rm -f vr-test-aof > /dev/null 2>&1 || true
 docker run -d --name vr-test-aof --network "$NET" "$IMG" \
   valkey-server --loadmodule /usr/lib/valkey/modules/libvalkey_roaring.so \
-  --appendonly yes > /dev/null
+  --appendonly yes --valkey-roaring.max-write-values 1000 > /dev/null
 ACLI="docker exec vr-test-aof valkey-cli"
 for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
 $ACLI R.SETBIT aofk 7 1 > /dev/null
 $ACLI R64.SETBIT aofk64 5000000000 1 > /dev/null
+$ACLI R.IMPORT aofb64 OjAAAAEAAAAAAAEAEAAAAAEAAgA= BASE64 > /dev/null
+# Written under a raised limit, replayed under the startup one (1000).
+$ACLI CONFIG SET valkey-roaring.max-write-values 274877906944 > /dev/null
+$ACLI R.SETRANGE aofrange 0 100000 > /dev/null
 sleep 1
 docker restart vr-test-aof > /dev/null
 for _ in $(seq 1 30); do [ "$($ACLI PING 2>/dev/null)" = "PONG" ] && break; sleep 1; done
 assert_eq "AOF replay restores module write" "1" "$($ACLI R.GETBIT aofk 7)"
 assert_eq "AOF replay restores R64 write" "1" "$($ACLI R64.GETBIT aofk64 5000000000)"
+assert_eq "AOF replay restores R.IMPORT ... BASE64" "$(printf '1\n2')" "$($ACLI R.GETINTARRAY aofb64)"
+assert_eq "AOF replay ignores a lower max-write-values" "100000" "$($ACLI R.BITCOUNT aofrange)"
+assert_eq "  ... while clients get it" "Roaring: range too large: maximum 1000 elements" "$($ACLI R.SETRANGE aofrange2 0 1001)"
 $ACLI BGREWRITEAOF > /dev/null
 sleep 2
 docker restart vr-test-aof > /dev/null

@@ -40,6 +40,7 @@ export default defineConfig({
           { text: "Getting Started", link: "/guide/getting-started" },
           { text: "Export / Import", link: "/guide/export-import" },
           { text: "Persistence & Replication", link: "/guide/persistence-and-replication" },
+          { text: "Configuration", link: "/guide/configuration" },
           { text: "Performance", link: "/guide/performance" },
         ],
       },

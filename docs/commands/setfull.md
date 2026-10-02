@@ -18,8 +18,8 @@ Simple string `OK`; an existing key is an error.
 
 ## Notes
 
-- `R.SETFULL` stores 2³² values as 65,536 run containers (about 3 MB).
-- `R64.SETFULL` is refused with `Roaring: range too large: maximum 274877906944 elements`: the full 64-bit space would need 2⁴⁸ containers, and an unguarded attempt allocated until the server was killed. Use `R64.SETRANGE` over the range you actually need (see [limits](/commands/#limits)).
+- `R.SETFULL` stores 2³² values as 65,536 run containers (about 3 MB). It is refused when `valkey-roaring.max-write-values` is set below 4294967296, and, with `maxmemory` set, when those 3 MB would push used memory past it (see [limits](/commands/#limits)).
+- `R64.SETFULL` is always refused, with `Roaring: range too large: maximum 274877906944 elements` by default: the full 64-bit space would need 2³² full 32-bit sub-bitmaps (2⁴⁸ containers), far more than any server holds. Use `R64.SETRANGE` over the range you actually need.
 
 ## Example
 
