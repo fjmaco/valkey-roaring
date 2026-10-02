@@ -14,7 +14,7 @@ Re-chooses container representations for the current data, improving compression
 
 ## Reply
 
-Simple string `OK`. A missing key is an error (`Roaring: key does not exist`), as in redis-roaring. An optional third argument (upstream's `MEM`) is accepted and changes nothing.
+Simple string `OK`. A missing key is an error (`Roaring: key does not exist`). An optional third argument (such as `MEM`) is accepted and changes nothing.
 
 ## Notes
 

@@ -269,7 +269,7 @@ unsafe extern "C" fn bitmap64_copy(
 
 /// The SDK's verify_type reports type mismatches as a plain string instead of
 /// the standard WRONGTYPE error. Normalize so clients can pattern-match the
-/// WRONGTYPE prefix, matching redis-roaring's replies.
+/// WRONGTYPE prefix.
 fn normalize_type_err(e: ValkeyError) -> ValkeyError {
     match e {
         ValkeyError::Str("Existing key has wrong Valkey type") => ValkeyError::WrongType,
@@ -626,7 +626,7 @@ fn r64_import(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
 // ============================================================
 valkey_module! {
     name: "valkey-roaring",
-    // major*10000 + minor*100 + patch, matching redis-roaring's encoding
+    // major*10000 + minor*100 + patch
     version: 10101,
     allocator: (ValkeyAlloc, ValkeyAlloc),
     data_types: [

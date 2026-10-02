@@ -18,7 +18,7 @@ pub(crate) fn decode_exact<T: RoaringType>(bytes: &[u8]) -> io::Result<T> {
     Ok(value)
 }
 
-/// R.STAT's fields as redis-roaring reports them, in CRoaring's units:
+/// R.STAT's fields, in CRoaring's units:
 /// array container bytes are 2 per value, bitset container bytes 8192 per
 /// container, run container bytes each container's serialized size (2 plus
 /// 4 per run). An empty bitmap reports max 0 and min the width's maximum.
@@ -188,7 +188,7 @@ pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
     // -- Positional --
     /// Returns the nth element (0-indexed).
     fn select(&self, n: u64) -> Option<Self::Value>;
-    /// Returns the nth absent element (1-indexed, matching C module).
+    /// Returns the nth absent element (1-indexed).
     fn nth_absent(&self, n: u64) -> Option<Self::Value>;
 
     // -- NOT/Flip --
@@ -228,7 +228,7 @@ pub trait RoaringType: Send + Sync + Clone + PartialEq + fmt::Debug + 'static {
 
     // -- Range operations --
     /// Insert every value in [start, end) — end-exclusive, like CRoaring's
-    /// add_range (redis-roaring's SETRANGE semantics).
+    /// add_range (R.SETRANGE's semantics).
     fn insert_range_exclusive(&mut self, start: Self::Value, end: Self::Value) -> u64;
 
     // -- Iterator --

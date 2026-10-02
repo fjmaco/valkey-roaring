@@ -1,4 +1,5 @@
-//! valkey-roaring: Error constants matching redis-roaring error messages.
+//! valkey-roaring: Error constants. Their text is reply text, kept stable
+//! for compatibility.
 
 pub const ERR_KEY_NOT_FOUND: &str = "Roaring: key does not exist";
 pub const ERR_KEY_EXISTS: &str = "Roaring: key already exist";

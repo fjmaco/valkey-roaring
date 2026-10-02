@@ -33,12 +33,11 @@ Notes:
   tests for the algorithm, integration assertions for the wire behavior
   (including wrong-arity and WRONGTYPE cases — the suite checks these
   systematically for every command).
-- Command semantics follow [redis-roaring](https://github.com/aviggiano/redis-roaring),
-  reply for reply: argument grammar, check order, error wording and reply
-  types included. When adding something that exists upstream, match its exact
-  bytes (the testing repository's suite 09 compares them under RESP2 and
-  RESP3). Diverge only where upstream crashes, hangs, overflows or loses
-  data; add the case to the "Differences from redis-roaring" table in
-  `docs/commands/index.md` and to suite 09's documented divergences.
+- Command replies are a compatibility contract: argument grammar, check
+  order, error wording and reply types included (the testing repository's
+  suite 09 checks them byte for byte under RESP2 and RESP3). Don't change
+  them without updating the command reference (`docs/commands/`, including
+  the "Edge cases" and "Limits" sections of `docs/commands/index.md`), the
+  tests, and suite 09's expectations.
 - The performance table in the README is refreshed by the benchmark
   workflow — don't hand-edit the numbers.

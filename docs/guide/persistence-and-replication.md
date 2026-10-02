@@ -51,9 +51,8 @@ Module keys participate in the keyspace like native types:
   their spare capacity and allocator rounding), typically within 15% of what
   the allocator reports; the serialized `R.EXPORT` size is usually smaller
 
-Module write commands do not emit keyspace notifications (matching
-redis-roaring); server-generated events such as `expired` fire normally for
-module keys.
+Module write commands do not emit keyspace notifications; server-generated
+events such as `expired` fire normally for module keys.
 
 ## Cluster mode
 

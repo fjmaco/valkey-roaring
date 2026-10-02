@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Performance benchmark for valkey-roaring, replicating redis-roaring's
-# performance.sh: runs the benchmark harness against the dockerized Valkey
-# and splices the resulting table into README.md between the
-# BEGIN_PERFORMANCE / END_PERFORMANCE markers.
+# Performance benchmark for valkey-roaring: runs the benchmark harness
+# against the dockerized Valkey and splices the resulting table into
+# README.md between the BEGIN_PERFORMANCE / END_PERFORMANCE markers.
 #
 # Usage: bash tests/performance.sh
 #   PERF_MAX_FILES=N   limit dataset files for a quick smoke run

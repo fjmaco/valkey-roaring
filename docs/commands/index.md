@@ -23,8 +23,8 @@ integers are signed 64-bit); everything else is a plain integer reply.
 
 ## Arguments and errors
 
-Arguments are read exactly as redis-roaring reads them, and errors carry
-its wording:
+Arguments are parsed strictly, and the error replies below are part of the
+reply contract:
 
 - **32-bit values** are `0` or a non-zero digit followed by digits, at most
   4294967295: no sign, no leading zeros, no spaces. Anything else replies
@@ -62,22 +62,17 @@ its wording:
   page through it with RANGEINTARRAY (at most 100,000,000 positions per
   call) or transfer it with EXPORT.
 
-## Differences from redis-roaring
+## Edge cases
 
-Replies match redis-roaring's byte for byte, except in these cases, where
-upstream crashes, hangs, overflows or gives a wrong answer:
-
-| Command | redis-roaring | valkey-roaring |
-|---------|---------------|----------------|
-| `R.SETBIT newkey 7 0` | sets bit 7 | creates an empty key; bit 7 stays clear |
-| `R.BITOP NOT dest src 4294967295` | `last + 1` overflows: a copy of the source | the complement over the whole 32-bit space |
-| `R64.BITOP NOT` over a universe past 2³⁸ | allocates until killed, or (`last` = 2⁶⁴−1) overflows to a copy | `Roaring: range too large: maximum 274877906944 elements` |
-| `R64.SETFULL`, `R64.SETRANGE` past 2³⁸ values | allocates until killed | the same error |
-| variadic `R.BITOP` with a wrong-type source | two `WRONGTYPE` replies for one command | one `WRONGTYPE` reply |
-| `R64.RANGEINTARRAY key 0 18446744073709551615` | `ERR out of memory` | the whole bitmap, as `R.RANGEINTARRAY key 0 4294967295` replies |
-| `GETINTARRAY` past 100,000,000 values | streams every value (2³² for `R.SETFULL`) | `Roaring: range too large: maximum 100000000 elements` |
-| full-width `RANGEINTARRAY` past 100,000,000 values | tries to list every value | the same error |
-| `GETBITARRAY` with a maximum at or past 100,000,000 | builds the string; crashes on `R.SETFULL` | the same error |
-| `R.STAT`'s per-encoding container breakdown after range inserts and set operations | CRoaring's encodings (a 2-value `SETRANGE` is a run) | this module's (an array); every other field matches, and so does the breakdown after `OPTIMIZE` |
-
-`R.EXPORT` / `R.IMPORT` are valkey-roaring additions.
+| Case | Reply |
+|------|-------|
+| `R.SETBIT newkey 7 0` | creates an empty key; bit 7 stays clear |
+| `R.BITOP NOT dest src 4294967295` | the complement over the whole 32-bit space |
+| `R64.BITOP NOT` over a universe past 2³⁸, `last` = 2⁶⁴−1 included | `Roaring: range too large: maximum 274877906944 elements` |
+| `R64.SETFULL`, `R64.SETRANGE` past 2³⁸ values | the same error |
+| variadic `R.BITOP` with a wrong-type source | a single `WRONGTYPE` reply |
+| `R64.RANGEINTARRAY key 0 18446744073709551615` | the whole bitmap, as `R.RANGEINTARRAY key 0 4294967295` replies |
+| `GETINTARRAY` past 100,000,000 values | `Roaring: range too large: maximum 100000000 elements` |
+| full-width `RANGEINTARRAY` past 100,000,000 values | the same error |
+| `GETBITARRAY` with a maximum at or past 100,000,000, an `R.SETFULL` key included | the same error |
+| `R.STAT`'s per-encoding container breakdown after range inserts and set operations | this module's container encodings (a 2-value `SETRANGE` is stored as an array, not a run); every other field depends only on the values, and after `OPTIMIZE` so does the breakdown (see [STAT](/commands/stat)) |

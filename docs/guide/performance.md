@@ -1,8 +1,8 @@
 # Performance
 
-Benchmark methodology follows redis-roaring's performance suite: CRoaring's
-`census1881` dataset, full client round-trip latency per command against a
-dockerized Valkey, compared with the equivalent native commands. The
+Benchmark methodology: CRoaring's `census1881` dataset, full client
+round-trip latency per command against a dockerized Valkey, compared with
+the equivalent native commands. The
 benchmark runs in CI whenever performance-relevant code changes and updates
 the table below automatically.
 
