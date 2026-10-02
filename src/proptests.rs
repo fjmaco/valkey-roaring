@@ -1221,6 +1221,24 @@ fn set_eq_matches_the_operator_across_encodings() {
                 let ta: RoaringTreemap = a.iter().map(|v| u64::from(v) << 3).collect();
                 let tb: RoaringTreemap = other.iter().map(|v| u64::from(v) << 3).collect();
                 assert_eq!(RoaringType::set_eq(&ta, &tb), ta == tb);
+                // Spread over high words (4096 values each, the small-sub
+                // path), with sub-bitmaps run-compressed on one side.
+                let spread = |bm: &RoaringBitmap, optimize: bool| {
+                    let t: RoaringTreemap = bm
+                        .iter()
+                        .map(|v| (u64::from(v >> 12) << 32) | u64::from(v & 0xFFF))
+                        .collect();
+                    RoaringTreemap::from_bitmaps(t.bitmaps().map(|(k, b)| {
+                        let mut b = b.clone();
+                        if optimize {
+                            b.optimize();
+                        }
+                        (k, b)
+                    }))
+                };
+                let (sa, sb) = (spread(a, false), spread(other, true));
+                assert_eq!(RoaringType::set_eq(&sa, &sb), sa == sb);
+                assert_eq!(RoaringType::set_eq(&sb, &sa), sa == sb);
             }
             // One value apart: never equal, ALL_STRICT by length.
             let mut c = a.clone();
@@ -1232,6 +1250,36 @@ fn set_eq_matches_the_operator_across_encodings() {
             );
         }
     }
+}
+
+#[test]
+fn treemap_set_eq_past_the_length_check() {
+    // Twenty small sub-bitmaps, then a dense one (bitsets) and a run-heavy
+    // one: the later sub-bitmaps go through the length check.
+    let mut base: Vec<u64> = (0..20u64)
+        .flat_map(|h| (0..50u64).map(move |v| (h << 32) | (v * 9)))
+        .collect();
+    base.extend((0..30_000u64).map(|v| (25u64 << 32) | (v * 2)));
+    base.extend((0..100_000u64).map(|v| (30u64 << 32) | v));
+    let a: RoaringTreemap = base.iter().copied().collect();
+    let mut optimized = a.clone();
+    optimized.optimize();
+    for (value, present) in [
+        ((25u64 << 32) | 4, true),
+        ((25u64 << 32) | 5, false),
+        ((30u64 << 32) | 99_999, true),
+    ] {
+        let mut b = a.clone();
+        if present {
+            b.remove(value);
+        } else {
+            b.insert(value);
+        }
+        assert!(!RoaringType::set_eq(&a, &b) && !RoaringType::set_eq(&b, &a));
+        assert!(!RoaringType::set_eq(&optimized, &b));
+    }
+    assert!(RoaringType::set_eq(&a, &a.clone()));
+    assert!(RoaringType::set_eq(&a, &optimized) && RoaringType::set_eq(&optimized, &a));
 }
 
 /// The exact-size builder (SETINTARRAY, SETBITARRAY) against roaring-rs's
@@ -1300,10 +1348,10 @@ fn exact_builder_matches_from_sorted_iter() {
     }
 }
 
-/// NOT's direct complement against the full-range XOR it replaced, for
-/// every kind of source chunk (absent, sparse, clustered, dense, full, runs
-/// crossing chunk edges) and every kind of `last` (chunk edges, u32::MAX,
-/// the source maximum), on both widths.
+/// NOT's direct complement, and the gated flip that uses it, against the
+/// full-range XOR, for every kind of source chunk (absent, sparse,
+/// clustered, dense, full, runs crossing chunk edges) and every kind of
+/// `last` (chunk edges, u32::MAX, the source maximum), on both widths.
 #[test]
 fn complement_matches_the_range_xor() {
     fn reference32(src: &RoaringBitmap, last: u32) -> RoaringBitmap {
@@ -1328,6 +1376,11 @@ fn complement_matches_the_range_xor() {
         (0..200_000u32).filter(|v| v % 3 != 0).collect(), // dense, many gaps
         [u32::MAX].into_iter().collect(),
         (u32::MAX - 70_000..=u32::MAX).collect(),
+        // Clustered head, sparse tail: the sample says clustered, the walk
+        // budget then sends it down the XOR route.
+        (0..10_000u32)
+            .chain((0..100_000u32).map(|i| 20_000_000 + i * 97))
+            .collect(),
     ];
     for _ in 0..30 {
         let span = 1 + next() % (1u64 << (12 + next() % 21));
@@ -1353,7 +1406,11 @@ fn complement_matches_the_range_xor() {
             if last < max {
                 continue;
             }
-            let fast = crate::bitmap32::complement_within(src, last);
+            let fast = crate::bitmap32::complement_within(src, last, usize::MAX).unwrap();
+            assert_eq!(
+                RoaringType::flip_inclusive(src, last),
+                reference32(src, last)
+            );
             assert_eq!(fast, reference32(src, last), "last {last}");
             assert_eq!(RoaringType::len(&fast), u64::from(last) + 1 - src.len());
         }
@@ -1371,6 +1428,85 @@ fn complement_matches_the_range_xor() {
             r.insert_range(0..=last);
             r ^= &t;
             assert_eq!(RoaringType::flip_inclusive(&t, last), r, "R64 last {last}");
+        }
+    }
+}
+
+/// NOT's direct complement builds its result from a blob decoded without
+/// validation. Whatever route a source takes (clustered, sparse, dense,
+/// runs, chunk edges, the top of the range; both widths), the result must
+/// be a structurally valid bitmap: its own serialization decodes through
+/// the checking decoder (sorted arrays, exact bitset counts, runs that
+/// neither overlap nor touch), to the same set, and it exports canonically.
+#[test]
+fn complement_results_are_structurally_valid() {
+    fn checked32(b: &RoaringBitmap) -> RoaringBitmap {
+        let mut blob = Vec::new();
+        b.serialize_into(&mut blob).unwrap();
+        RoaringBitmap::deserialize_from(&blob[..]).expect("valid by the checking decoder")
+    }
+    let mut state = 0xC0FF_EE00_D15E_A5E5u64;
+    for round in 0..60 {
+        // Clustered runs of 8..400 values, sometimes with sparse values and
+        // full containers mixed in.
+        let mut src = RoaringBitmap::new();
+        let span: u32 = [1 << 20, 1 << 24, 1 << 28, u32::MAX][round % 4];
+        for _ in 0..1 + xorshift(&mut state) % 300 {
+            let s = (xorshift(&mut state) % u64::from(span)) as u32;
+            let len = 8 + (xorshift(&mut state) % 400) as u32;
+            src.insert_range(s..s.saturating_add(len));
+        }
+        if round % 3 == 1 {
+            for _ in 0..50 {
+                src.insert((xorshift(&mut state) % u64::from(span)) as u32);
+            }
+        }
+        if round % 5 == 2 {
+            let k = (xorshift(&mut state) % u64::from(span >> 16).max(1)) as u32;
+            src.insert_range(k << 16..=(k << 16) | 0xFFFF);
+        }
+        if round % 2 == 0 {
+            src.optimize();
+        }
+        let max = src.max().unwrap_or(0);
+        for last in [
+            max,
+            max.saturating_add(1),
+            max | 0xFFFF,
+            max.saturating_add(70_000),
+            u32::MAX,
+        ] {
+            let flipped = RoaringType::flip_inclusive(&src, last);
+            let back = checked32(&flipped);
+            assert_eq!(back, flipped, "round {round} last {last}");
+            assert_eq!(RoaringType::len(&flipped), u64::from(last) + 1 - src.len());
+            let vals_ok = flipped.iter().take(2_000).all(|v| !src.contains(v));
+            assert!(
+                vals_ok,
+                "round {round}: a source value survived the complement"
+            );
+            let mut f = flipped.clone();
+            let blob = f.export_canonical().unwrap();
+            let mut rebuilt = checked32(&flipped);
+            rebuilt.optimize();
+            let mut via_bulk = <RoaringBitmap as RoaringType>::deserialize_from(&blob[..]).unwrap();
+            assert_eq!(via_bulk.export_canonical().unwrap(), blob);
+            assert_eq!(via_bulk, rebuilt);
+        }
+        // R64: the same source spread over three sub-bitmaps, `last` in the
+        // third, so blocks are flipped, filled and cut.
+        let t: RoaringTreemap = src
+            .iter()
+            .map(|v| (u64::from(v % 3) << 32) | u64::from(v))
+            .collect();
+        let last = (2u64 << 32) | u64::from(max);
+        let flipped = RoaringType::flip_inclusive(&t, last);
+        let mut reference = RoaringTreemap::new();
+        reference.insert_range(0..=last);
+        reference ^= &t;
+        assert_eq!(flipped, reference, "R64 round {round}");
+        for (_, bm) in flipped.bitmaps() {
+            assert_eq!(&checked32(bm), bm, "R64 round {round}: invalid sub-bitmap");
         }
     }
 }

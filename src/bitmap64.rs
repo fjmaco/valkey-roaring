@@ -1,8 +1,8 @@
 //! valkey-roaring: RoaringType implementation for RoaringTreemap (u64).
 
 use crate::bitmap32::{
-    alloc_size, bitmaps_equal, containers_heap_size, from_sorted_exact, tied_values,
-    union_in_place_is_cheap, worth_compacting, INTERSECT_IN_PLACE_FROM,
+    alloc_size, bitmaps_equal, containers_heap_size, copy_then_filter, from_sorted_exact,
+    range_through, tied_values, union_in_place_is_cheap, worth_compacting, ARRAY_MAX_VALUES,
 };
 use crate::bitmap_type::{RoaringType, StatFields};
 use crate::canonical::{self, Tie};
@@ -153,6 +153,25 @@ fn treemap_union(a: &RoaringTreemap, b: &RoaringTreemap) -> RoaringTreemap {
     }))
 }
 
+/// bitmap32::copy_then_filter over a treemap's first sub-bitmaps (a sample
+/// of at most 16): a key spread over thousands of high words would
+/// otherwise pay a statistics pass per sub-bitmap, ~10 ns each (+11% on a
+/// 1M-value DIFF over 12k sub-bitmaps). A sample that misleads costs the
+/// slower of two correct routes (at most ~1.8x, measured).
+fn treemap_copies_to_filter(tm: &RoaringTreemap) -> bool {
+    const SAMPLE_SUBS: usize = 16;
+    let (mut cardinality, mut containers, mut span) = (0u64, 0u64, 0u64);
+    for (_, bm) in tm.bitmaps().take(SAMPLE_SUBS) {
+        if let (Some(lo), Some(hi)) = (bm.min(), bm.max()) {
+            let s = bm.statistics();
+            cardinality += s.cardinality;
+            containers += u64::from(s.n_containers);
+            span += u64::from(hi >> 16) - u64::from(lo >> 16) + 1;
+        }
+    }
+    copy_then_filter(cardinality, containers, span)
+}
+
 /// A treemap from sorted, deduplicated values, each sub-bitmap built at
 /// exact size (bitmap32::from_sorted_exact).
 fn from_sorted_exact_64(vals: &[u64]) -> RoaringTreemap {
@@ -300,13 +319,14 @@ impl RoaringType for RoaringTreemap {
     }
 
     fn intersection(&self, other: &Self) -> Self {
-        // Same crossover as the 32-bit type.
-        if RoaringTreemap::len(self) < INTERSECT_IN_PLACE_FROM * self.container_count() as u64 {
-            self & other
-        } else {
+        // roaring-rs's treemap operations pair sub-bitmaps and use the
+        // 32-bit kernels, so the 32-bit rule applies to summed statistics.
+        if treemap_copies_to_filter(self) {
             let mut out = self.clone();
             out &= other;
             out
+        } else {
+            self & other
         }
     }
 
@@ -315,10 +335,13 @@ impl RoaringType for RoaringTreemap {
     }
 
     fn difference(&self, other: &Self) -> Self {
-        // Copy-then-subtract, as for the 32-bit type.
-        let mut out = self.clone();
-        out -= other;
-        out
+        if treemap_copies_to_filter(self) {
+            let mut out = self.clone();
+            out -= other;
+            out
+        } else {
+            self - other
+        }
     }
 
     fn is_disjoint(&self, other: &Self) -> bool {
@@ -326,12 +349,30 @@ impl RoaringType for RoaringTreemap {
     }
 
     fn set_eq(&self, other: &Self) -> bool {
-        // Sub-bitmaps pair up by high word (empty ones are never kept).
+        // Sub-bitmaps pair up by high word (empty ones are never kept). Keys
+        // spread over many high words leave most sub-bitmaps with a few
+        // values, where a length within one array container rules bitsets
+        // out for ~1 ns against ~6 ns for `bitmaps_equal`'s statistics pass
+        // (2.4x slower than `==` over 12k such sub-bitmaps). A large
+        // sub-bitmap would pay the length pass on top, so the check starts
+        // only past the first few sub-bitmaps.
+        const LENGTH_CHECK_FROM: usize = 16;
         let (mut a, mut b) = (self.bitmaps(), other.bitmaps());
+        let mut index = 0;
         loop {
             match (a.next(), b.next()) {
                 (None, None) => return true,
-                (Some((ka, ba)), Some((kb, bb))) if ka == kb && bitmaps_equal(ba, bb) => {}
+                (Some((ka, ba)), Some((kb, bb))) if ka == kb => {
+                    let equal = if index >= LENGTH_CHECK_FROM && ba.len() <= ARRAY_MAX_VALUES {
+                        ba == bb
+                    } else {
+                        bitmaps_equal(ba, bb)
+                    };
+                    if !equal {
+                        return false;
+                    }
+                    index += 1;
+                }
                 _ => return false,
             }
         }
@@ -382,10 +423,31 @@ impl RoaringType for RoaringTreemap {
     }
 
     fn flip_inclusive(&self, last: u64) -> Self {
-        let mut range_bm = RoaringTreemap::new();
-        range_bm.insert_range(0..=last);
-        range_bm ^= self;
-        range_bm
+        if self.max().is_some_and(|m| m > last) {
+            // Values above `last` stay as they are (never the case for NOT).
+            let mut range_bm = RoaringTreemap::new();
+            range_bm.insert_range(0..=last);
+            range_bm ^= self;
+            return range_bm;
+        }
+        // Per sub-bitmap, as roaring-rs's treemap XOR works, but through the
+        // 32-bit flip, which complements clustered sub-bitmaps directly
+        // (bitmap32::complement_clustered); a full block where the source has
+        // none. Few blocks: the 2^38 limit allows 65.
+        let last_hi = (last >> 32) as u32;
+        let mut mine = self.bitmaps().peekable();
+        let mut subs = Vec::with_capacity(last_hi as usize + 1);
+        for hi in 0..=last_hi {
+            let top = if hi == last_hi { last as u32 } else { u32::MAX };
+            let flipped = match mine.next_if(|&(h, _)| h == hi) {
+                Some((_, bm)) => RoaringType::flip_inclusive(bm, top),
+                None => range_through(top),
+            };
+            if !flipped.is_empty() {
+                subs.push((hi, flipped));
+            }
+        }
+        RoaringTreemap::from_bitmaps(subs)
     }
 
     fn serialize_into<W: io::Write>(&self, writer: W) -> io::Result<()> {

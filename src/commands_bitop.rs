@@ -226,6 +226,9 @@ pub fn op_xor<T: RoaringType>(sources: &[&T]) -> T {
 pub fn op_andor<T: RoaringType>(sources: &[&T]) -> T {
     match sources {
         [] | [_] => T::new(),
+        // One source on the right: a plain intersection, which can build
+        // its result fresh instead of copying that source.
+        [first, only] => only.intersection(first),
         [first, rest @ ..] => {
             let mut union = op_or(rest);
             union.bitand_assign(first);
@@ -253,6 +256,7 @@ pub fn op_andnot<T: RoaringType>(sources: &[&T]) -> T {
 pub fn op_ornot<T: RoaringType>(sources: &[&T]) -> T {
     match sources {
         [] | [_] => T::new(),
+        [first, only] => only.difference(first),
         [first, rest @ ..] => {
             let mut union = op_or(rest);
             union.sub_assign(first);

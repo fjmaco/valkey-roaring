@@ -13,9 +13,43 @@ use std::mem::size_of;
 pub(crate) const CONTAINER_RECORD_BYTES: usize = 40;
 /// One bitset container's word array.
 const BITSET_BYTES: usize = 8192;
-/// Average values per container from which `intersection` copies and
-/// filters rather than building its result fresh (measured crossover).
-pub(crate) const INTERSECT_IN_PLACE_FROM: u64 = 32;
+/// Average values per container from which an intersection or difference
+/// may copy the left side and filter it in place rather than build its
+/// result fresh (measured crossover; see `copy_then_filter`).
+pub(crate) const COPY_FILTER_FROM: u64 = 32;
+/// Share of the left side's key span its containers must cover (in
+/// quarters) for copying and filtering to pay: below it, many of its
+/// containers have no partner on the right, and the fresh build never
+/// copies them (an AND drops them, a DIFF keeps them once).
+const COPY_FILTER_COVERAGE_QUARTERS: u64 = 3;
+
+/// Whether an intersection or difference with `a` on the left should copy
+/// `a` and filter it in place (roaring-rs's `&=` / `-=`), rather than build
+/// the result fresh (`&` / `-`, which write only what survives). Copying
+/// pays for sparse keys with well-filled containers spanning the whole
+/// range (50k and 1M sparse values: 25-50% faster); the fresh build wins on
+/// clustered keys, whose containers spread thinly over their span (10k
+/// clustered values: DIFF 4.5 against 8.1 us), and on containers of only a
+/// few values. Dense bitsets cost the same either way. Inputs are summed
+/// statistics: cardinality, container count, and the key span covered.
+pub(crate) fn copy_then_filter(cardinality: u64, containers: u64, span: u64) -> bool {
+    containers > 0
+        && cardinality >= COPY_FILTER_FROM * containers
+        && 4 * containers >= COPY_FILTER_COVERAGE_QUARTERS * span
+}
+
+/// `copy_then_filter` for one bitmap: one statistics pass (~0.6 ns per
+/// container) and its first and last keys.
+pub(crate) fn copies_to_filter(a: &RoaringBitmap) -> bool {
+    match (a.min(), a.max()) {
+        (Some(lo), Some(hi)) => {
+            let s = a.statistics();
+            let span = u64::from(hi >> 16) - u64::from(lo >> 16) + 1;
+            copy_then_filter(s.cardinality, u64::from(s.n_containers), span)
+        }
+        _ => false,
+    }
+}
 
 /// Bytes the allocator hands out for a request: Valkey's used_memory counts
 /// jemalloc's usable size, i.e. the request rounded up to a size class (8,
@@ -222,20 +256,16 @@ pub(crate) fn from_sorted_exact(vals: &[u32]) -> RoaringBitmap {
 
 /// The complement of `src` within [0, last], for a `src` with no value above
 /// `last` (BITOP NOT), built directly in the portable layout and decoded
-/// once. roaring-rs's route, a full-range bitmap XORed with the source,
-/// splits a full run container once per value of each array container (14x
-/// slower than upstream on 1M sparse values). Here the source is walked by
-/// runs of consecutive values, each chunk's gaps become its container in
-/// the smallest encoding (run, array or bitset), and a chunk the source
-/// lacks is a single run.
-///
-/// NOT WIRED IN (round 4, paused): measured against the XOR route it is
-/// 20x faster on clustered sources (1M values: 0.33 against 7.2 ms) but much
-/// slower on dense ones (bitset sources walked run by run: 1M dense values
-/// 8.0 against 0.12 ms) and on 1M sparse values (28.6 against 18.5 ms).
-/// Kept, with its equivalence test, for a per-chunk hybrid.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn complement_within(src: &RoaringBitmap, last: u32) -> RoaringBitmap {
+/// once: the source is walked by runs of consecutive values, each chunk's
+/// gaps become its container in the smallest encoding (run, array or
+/// bitset), and a chunk the source lacks is a single run. None once more
+/// than `max_runs` runs have been walked (the caller then takes the XOR
+/// route). See `complement_clustered` for when this is used.
+pub(crate) fn complement_within(
+    src: &RoaringBitmap,
+    last: u32,
+    max_runs: usize,
+) -> Option<RoaringBitmap> {
     const COOKIE_RUNS: u32 = 12347; // portable cookie with run containers
     const ARRAY: u8 = 0;
     const BITSET: u8 = 1;
@@ -248,6 +278,7 @@ pub(crate) fn complement_within(src: &RoaringBitmap, last: u32) -> RoaringBitmap
     let mut gaps: Vec<(u32, u32)> = Vec::new();
     let mut ranges = src.iter();
     let mut pending = ranges.next_range().map(|r| (*r.start(), *r.end()));
+    let mut walked = 1usize;
     for key in 0..=last_key {
         let lo = key << 16;
         let hi = (lo | 0xFFFF).min(last);
@@ -268,6 +299,10 @@ pub(crate) fn complement_within(src: &RoaringBitmap, last: u32) -> RoaringBitmap
                 break;
             }
             pending = ranges.next_range().map(|r| (*r.start(), *r.end()));
+            walked += 1;
+            if walked > max_runs {
+                return None;
+            }
         }
         if cur <= u64::from(hi) {
             gaps.push((cur as u32, hi));
@@ -326,7 +361,7 @@ pub(crate) fn complement_within(src: &RoaringBitmap, last: u32) -> RoaringBitmap
         descs.push((key as u16, kind, card));
     }
     if descs.is_empty() {
-        return RoaringBitmap::new();
+        return Some(RoaringBitmap::new());
     }
     // Header: cookie with the container count, run flags, descriptions,
     // and offsets from four containers up.
@@ -364,8 +399,77 @@ pub(crate) fn complement_within(src: &RoaringBitmap, last: u32) -> RoaringBitmap
         }
     }
     blob.extend_from_slice(&payload);
-    RoaringBitmap::deserialize_unchecked_from(&blob[..]).expect("valid by construction")
+    Some(RoaringBitmap::deserialize_unchecked_from(&blob[..]).expect("valid by construction"))
 }
+
+/// Values per run of consecutive values, over the first CLUSTER_SAMPLE_RUNS
+/// runs, from which NOT complements a source directly.
+const CLUSTERED_VALUES_PER_RUN: u64 = 8;
+const CLUSTER_SAMPLE_RUNS: u64 = 64;
+/// Chunks of [0, last] per source value up to which the direct complement
+/// pays: every chunk the source lacks costs it a run container decoded from
+/// the blob, a little more than the full-range bitmap's (an R64 sub-bitmap
+/// of 2.5k clustered values complemented over 2^32: 15% slower direct;
+/// 250k values: 45% faster).
+const COMPLEMENT_CHUNKS_PER_VALUE: u64 = 5;
+
+/// NOT's complement over [0, last], built directly (`complement_within`)
+/// when the source is clustered: no bitset container, at least
+/// CLUSTERED_VALUES_PER_RUN values per run over a sample of its first runs,
+/// and a value per COMPLEMENT_CHUNKS_PER_VALUE chunks of the range. None
+/// otherwise, or when `src` has values above `last`, and the caller XORs a
+/// full range instead.
+///
+/// roaring-rs's XOR of a full run container against an array splits the
+/// run once per value: on clustered sources that is a split per value of
+/// every run (1M clustered values: 7.2 ms), where the direct build writes
+/// one interval per gap (0.27 ms; upstream 1.3 ms). On sparse sources (about
+/// one value per run) and bitsets the XOR is as fast or faster (the direct
+/// build walks every run: 1M sparse values 1.4x slower, 1M dense values
+/// 70x), so they keep it; the sample costs well under a microsecond. A
+/// walk budget of 16 runs per container bounds a source whose sample
+/// misleads.
+pub(crate) fn complement_clustered(src: &RoaringBitmap, last: u32) -> Option<RoaringBitmap> {
+    if src.max().is_some_and(|m| m > last) {
+        return None;
+    }
+    let stats = src.statistics();
+    let chunks = u64::from(last >> 16) + 1;
+    if stats.n_bitset_containers > 0 || COMPLEMENT_CHUNKS_PER_VALUE * stats.cardinality < chunks {
+        return None;
+    }
+    let mut sample = src.iter();
+    let (mut runs, mut values) = (0u64, 0u64);
+    while runs < CLUSTER_SAMPLE_RUNS {
+        match sample.next_range() {
+            Some(r) => {
+                runs += 1;
+                values += u64::from(r.end() - r.start()) + 1;
+            }
+            None => break,
+        }
+    }
+    if values < CLUSTERED_VALUES_PER_RUN * runs {
+        return None;
+    }
+    complement_within(src, last, 16 * stats.n_containers as usize + 64)
+}
+
+/// `0..=last` as a bitmap. The full range comes from `RoaringBitmap::full`,
+/// which builds its 65536 run containers in one exact-size vector, where
+/// `insert_range` grows the vector container by container (~0.8 ms more).
+pub(crate) fn range_through(last: u32) -> RoaringBitmap {
+    if last == u32::MAX {
+        return RoaringBitmap::full();
+    }
+    let mut bm = RoaringBitmap::new();
+    bm.insert_range(0..=last);
+    bm
+}
+
+/// Values an array container holds at most: a bitmap with no more values
+/// than this has no bitset container.
+pub(crate) const ARRAY_MAX_VALUES: u64 = 4096;
 
 /// Set equality without roaring-rs's `==` on two bitset containers, which
 /// walks every set bit (19-116x slower than upstream on dense keys). `==`
@@ -556,15 +660,12 @@ impl RoaringType for RoaringBitmap {
     }
 
     fn intersection(&self, other: &Self) -> Self {
-        // Sparse containers: build the result fresh. From ~32 values per
-        // container up, copying and filtering in place measures faster
-        // (15-20% at 1M values; roaring-rs 0.11.5).
-        if RoaringBitmap::len(self) < INTERSECT_IN_PLACE_FROM * self.container_count() as u64 {
-            self & other
-        } else {
+        if copies_to_filter(self) {
             let mut out = self.clone();
             out &= other;
             out
+        } else {
+            self & other
         }
     }
 
@@ -573,11 +674,13 @@ impl RoaringType for RoaringBitmap {
     }
 
     fn difference(&self, other: &Self) -> Self {
-        // Copy-then-subtract measures faster than `self - other` for
-        // anything beyond small sets (roaring-rs 0.11.5).
-        let mut out = self.clone();
-        out -= other;
-        out
+        if copies_to_filter(self) {
+            let mut out = self.clone();
+            out -= other;
+            out
+        } else {
+            self - other
+        }
     }
 
     fn is_disjoint(&self, other: &Self) -> bool {
@@ -635,8 +738,10 @@ impl RoaringType for RoaringBitmap {
     }
 
     fn flip_inclusive(&self, last: u32) -> Self {
-        let mut range_bm = RoaringBitmap::new();
-        range_bm.insert_range(0..=last);
+        if let Some(complement) = complement_clustered(self, last) {
+            return complement;
+        }
+        let mut range_bm = range_through(last);
         range_bm ^= self;
         range_bm
     }
@@ -762,6 +867,28 @@ mod tests {
 
     fn bm(vals: &[u32]) -> RoaringBitmap {
         vals.iter().copied().collect()
+    }
+
+    #[test]
+    fn copy_then_filter_routes() {
+        // 50k sparse values over the whole 50M range: well-filled, full span.
+        let sparse: RoaringBitmap = (0..50_000u32).map(|i| i * 1000).collect();
+        // 10k clustered values in a few runs spread wide: thin coverage.
+        let clustered: RoaringBitmap = (0..40u32)
+            .flat_map(|r| r * 1_250_000..r * 1_250_000 + 250)
+            .collect();
+        // A few values per container, over the whole span.
+        let thin: RoaringBitmap = (0..5_000u32).map(|i| i * 10_000).collect();
+        assert!(copies_to_filter(&sparse));
+        assert!(!copies_to_filter(&clustered));
+        assert!(!copies_to_filter(&thin));
+        assert!(!copies_to_filter(&RoaringBitmap::new()));
+        assert!(!copy_then_filter(0, 0, 0));
+        // Either route gives the same set.
+        for (a, b) in [(&sparse, &clustered), (&clustered, &thin), (&thin, &sparse)] {
+            assert_eq!(RoaringType::intersection(a, b), a & b);
+            assert_eq!(RoaringType::difference(a, b), a - b);
+        }
     }
 
     #[test]
