@@ -42,13 +42,9 @@ Typical uses:
 - **Analytics interchange** — [export the compressed set](/guide/export-import)
   to any service that speaks the Roaring portable format
 
-## Origins
+## Implementation
 
-valkey-roaring is based on
-[redis-roaring](https://github.com/aviggiano/redis-roaring) by Antonio
-Viggiano and contributors, and tracks its changes and improvements —
-applications built against redis-roaring's commands work here unchanged. It
-is a ground-up Rust implementation: bitmaps come from
+valkey-roaring is a ground-up Rust implementation: bitmaps come from
 [roaring-rs](https://github.com/RoaringBitmap/roaring-rs), the RoaringBitmap
 project's pure-Rust implementation, on
 [valkeymodule-rs](https://github.com/valkey-io/valkeymodule-rs), the Valkey

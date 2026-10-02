@@ -82,7 +82,7 @@ pub fn handle_bitop<T: RoaringType>(
     if !is_variadic_op(op) {
         return Err(ValkeyError::Str(ERR_SYNTAX));
     }
-    // Variadic operations need at least two sources (redis-roaring arity).
+    // Variadic operations need at least two sources.
     if args.len() < 5 {
         return Err(ValkeyError::WrongArity);
     }

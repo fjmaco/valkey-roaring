@@ -392,8 +392,8 @@ impl RoaringType for RoaringTreemap {
 
     fn nth_absent(&self, n: u64) -> Option<u64> {
         // Find the nth element NOT present in the set (1-indexed).
-        // Gap-skipping walk over runs of consecutive values (O(runs), where
-        // upstream v1.7.4 walks values): `candidate` is the smallest value
+        // Gap-skipping walk over runs of consecutive values (O(runs) rather
+        // than O(values)): `candidate` is the smallest value
         // not yet classified. The treemap iterator has no run API, so walk
         // each 32-bit sub-bitmap's runs; a run cut at a sub-bitmap border
         // just shows up as two adjacent runs.

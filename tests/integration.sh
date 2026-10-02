@@ -428,7 +428,7 @@ assert_eq "R64 DIFF result" "$expected" "$result"
 
 # -------------------------------------------------------
 echo ""
-echo "=== UPSTREAM v1.7.3/v1.7.4 PARITY ==="
+echo "=== EDGE CASES AND COMPATIBILITY ==="
 run FLUSHALL > /dev/null
 
 # -------------------------------------------------------
@@ -451,7 +451,7 @@ expected=$(printf "0\n2\n4\n5")
 assert_eq "R64 NOT with last=5 values" "$expected" "$result"
 
 # -------------------------------------------------------
-echo "--- BITOP NOT on empty/missing source (v1.7.4) ---"
+echo "--- BITOP NOT on empty/missing source ---"
 assert_eq "NOT missing source cardinality" "0" "$(run R.BITOP NOT notempty missingkey)"
 assert_eq "NOT missing source creates key" "vrroaring" "$(run TYPE notempty)"
 assert_eq "NOT missing source bitcount" "0" "$(run R.BITCOUNT notempty)"
@@ -474,7 +474,7 @@ expected=$(printf "5\n6\n7")
 assert_eq "SETRANGE is end-exclusive" "$expected" "$result"
 
 # -------------------------------------------------------
-echo "--- BITOP getkeys (cluster routing, v1.7.3) ---"
+echo "--- BITOP getkeys (cluster routing) ---"
 result=$(run COMMAND GETKEYS R.BITOP NOT gd gs 100)
 expected=$(printf "gd\ngs")
 assert_eq "GETKEYS NOT excludes last arg" "$expected" "$result"
@@ -486,12 +486,12 @@ expected=$(printf "gd\ngs")
 assert_eq "R64 GETKEYS NOT excludes last arg" "$expected" "$result"
 
 # -------------------------------------------------------
-echo "--- BITOP invalid operation error reply (v1.7.4) ---"
+echo "--- BITOP invalid operation error reply ---"
 assert_contains "BITOP invalid op is an error" "syntax error" "$(run R.BITOP FOO d s1 s2)"
 assert_contains "R64 BITOP invalid op is an error" "syntax error" "$(run R64.BITOP BAR d s1 s2)"
 
 # -------------------------------------------------------
-echo "--- CLEARBITS duplicate offsets (v1.7.4) ---"
+echo "--- CLEARBITS duplicate offsets ---"
 run R.SETINTARRAY dupck 5 7 > /dev/null
 assert_eq "CLEARBITS duplicate offsets count once" "1" "$(run R.CLEARBITS dupck 5 5 5 COUNT)"
 result=$(run R.GETINTARRAY dupck)
@@ -500,7 +500,7 @@ run R64.SETINTARRAY dupck64 5 7 > /dev/null
 assert_eq "R64 CLEARBITS duplicate offsets count once" "1" "$(run R64.CLEARBITS dupck64 5 5 5 COUNT)"
 
 # -------------------------------------------------------
-echo "--- DELETEINTARRAY duplicate deletes of last value (v1.7.4) ---"
+echo "--- DELETEINTARRAY duplicate deletes of last value ---"
 run R64.SETINTARRAY dupdel64 100 > /dev/null
 assert_eq "R64 DELETEINTARRAY duplicate deletes OK" "OK" "$(run R64.DELETEINTARRAY dupdel64 100 100 100)"
 assert_eq "R64 DELETEINTARRAY duplicate deletes result" "0" "$(run R64.BITCOUNT dupdel64)"
@@ -509,7 +509,7 @@ assert_eq "DELETEINTARRAY duplicate deletes OK" "OK" "$(run R.DELETEINTARRAY dup
 assert_eq "DELETEINTARRAY duplicate deletes result" "0" "$(run R.BITCOUNT dupdel)"
 
 # -------------------------------------------------------
-echo "--- BITPOS edge cases (v1.7.4) ---"
+echo "--- BITPOS edge cases ---"
 run R.SETBIT bpz 0 1 > /dev/null
 assert_eq "BITPOS 0 on {0} bitmap" "1" "$(run R.BITPOS bpz 0)"
 assert_eq "BITPOS 1 on missing key" "-1" "$(run R.BITPOS bpmissing 1)"
@@ -749,9 +749,9 @@ assert_contains "CONTAINS invalid mode" "invalid mode" "$(run R.CONTAINS wtsrc w
 assert_contains "SETRANGE inverted range" "must be >= start" "$(run R.SETRANGE rangekey 5 2)"
 
 # -------------------------------------------------------
-echo "=== UPSTREAM PARITY: GRAMMAR, CHECK ORDER, REPLY FORMATS ==="
-# Exact replies as redis-roaring gives them (suite 09 of the testing repo
-# compares the same cases byte for byte against the upstream module).
+echo "=== GRAMMAR, CHECK ORDER, REPLY FORMATS ==="
+# Exact replies, a compatibility contract (suite 09 of the testing repo
+# checks the same cases byte for byte).
 run FLUSHALL > /dev/null
 run SET pstr x > /dev/null
 run R.SETINTARRAY pr 1 2 3 100 > /dev/null

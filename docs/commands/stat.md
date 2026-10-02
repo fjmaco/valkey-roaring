@@ -12,18 +12,18 @@ auto-detects whether the key holds a 32-bit or 64-bit bitmap.
 ## Arguments
 
 - **key** — the bitmap key (either width)
-- **format** — `JSON` for JSON; anything else (or nothing) for plain text. The token is case-sensitive, as upstream's.
+- **format** — `JSON` for JSON; anything else (or nothing) for plain text. The token is case-sensitive.
 
 ## Reply
 
-A verbatim string (`txt`) under RESP3, a bulk string under RESP2, laid out
-byte for byte as redis-roaring lays it out; null for a missing key.
+A verbatim string (`txt`) under RESP3, a bulk string under RESP2, in the
+fixed layout shown below; null for a missing key.
 
 The counters use CRoaring's units: array container bytes are 2 per value,
 bitset container bytes 8,192 per container, run container bytes 2 plus 4
 per run for each container. An empty bitmap reports `max value: 0` and
-`min value` the width's maximum. As in redis-roaring, the 32-bit counters
-are 32-bit (an `R.SETFULL` key reports `run container values: 0`).
+`min value` the width's maximum. The 32-bit counters are 32-bit (an
+`R.SETFULL` key reports `run container values: 0`).
 
 ## Notes
 
@@ -33,9 +33,9 @@ are 32-bit (an `R.SETFULL` key reports `run container values: 0`).
   2-value `SETRANGE` as a run where roaring-rs stores an array, an `XOR`
   result can come out the other way round, and `BITOP NOT` can leave
   runs where CRoaring holds a bitset. Every other field (type, cardinality,
-  number of containers, max, min) matches redis-roaring, as do the layout
-  and the units, and the breakdown agrees too after
-  [OPTIMIZE](/commands/optimize).
+  number of containers, max, min) depends only on the values, the layout
+  and the units are fixed, and the breakdown agrees with CRoaring's too
+  after [OPTIMIZE](/commands/optimize).
 
 ## Example
 

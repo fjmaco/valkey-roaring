@@ -1,10 +1,9 @@
 name: Benchmark
 
-# Full census1881 benchmark (~12M commands). Refreshes the README table the
-# same way redis-roaring's performance job does. Runs only when something
-# that can affect the numbers changes (module code, dependencies, the
-# harness, or the runtime image) — benchmarking unchanged code would only
-# record runner noise.
+# Full census1881 benchmark (~12M commands); refreshes the README table.
+# Runs only when something that can affect the numbers changes (module code,
+# dependencies, the harness, or the runtime image) — benchmarking unchanged
+# code would only record runner noise.
 on:
   push:
     branches: [main]

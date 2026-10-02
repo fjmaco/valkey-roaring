@@ -1,4 +1,4 @@
-//! valkey-roaring: Argument parsing with redis-roaring's exact grammars.
+//! valkey-roaring: Argument parsing, byte-exact to the documented grammars.
 //!
 //! Upstream parses 32-bit values and bits through RedisModule_StringToLongLong
 //! (Redis's string2ll: "0", or a non-zero digit followed by digits; no sign

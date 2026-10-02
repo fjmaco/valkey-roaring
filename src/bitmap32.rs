@@ -708,8 +708,8 @@ impl RoaringType for RoaringBitmap {
 
     fn nth_absent(&self, n: u64) -> Option<u32> {
         // Find the nth element NOT present in the set (1-indexed).
-        // Gap-skipping walk over runs of consecutive values (O(runs), where
-        // upstream v1.7.4 walks values): `candidate` is the smallest value
+        // Gap-skipping walk over runs of consecutive values (O(runs) rather
+        // than O(values)): `candidate` is the smallest value
         // not yet classified.
         if n == 0 {
             return None;
@@ -901,7 +901,7 @@ mod tests {
 
     #[test]
     fn nth_absent_single_zero() {
-        // Upstream v1.7.4 fix: for bitmap {0} the first absent value is 1.
+        // For bitmap {0} the first absent value is 1.
         assert_eq!(bm(&[0]).nth_absent(1), Some(1));
     }
 
@@ -980,7 +980,7 @@ mod tests {
 
     #[test]
     fn remove_many_counts_duplicates_once() {
-        // Upstream v1.7.4 fix: duplicate offsets are counted once.
+        // Duplicate offsets are counted once.
         let mut b = bm(&[5, 7]);
         assert_eq!(b.remove_many(&[5, 5, 5]), 1);
         assert_eq!(b, bm(&[7]));
@@ -1293,8 +1293,8 @@ mod delegation_tests {
         }
     }
 
-    /// R.STAT's text, byte for byte as redis-roaring prints it, with the
-    /// counters checked against the published module (CRoaring units).
+    /// R.STAT's text, byte for byte in its fixed layout, with the counters
+    /// in CRoaring's units.
     #[test]
     fn stat_matches_upstream_layout_and_units() {
         let b = bm(&[1, 2, 3]);

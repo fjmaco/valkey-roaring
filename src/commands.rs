@@ -120,7 +120,7 @@ fn parse_bit(ctx: &Context, arg: &ValkeyString, name: &str) -> Result<bool, Valk
 }
 
 /// Reply with a bitmap value. Values that fit i64 are integer replies; larger
-/// u64 values are decimal bulk strings, matching the C module's ReplyWithUint64.
+/// u64 values are decimal bulk strings (RESP integers are signed 64-bit).
 pub(crate) fn value_reply<T: RoaringType>(v: T::Value) -> ValkeyValue {
     let i = T::value_to_i64(v); // saturates at i64::MAX
     if i == i64::MAX && v.to_string() != i.to_string() {
@@ -350,8 +350,8 @@ pub fn handle_getbits<T: RoaringType>(
         return Err(ValkeyError::WrongArity);
     }
     let key = ctx.open_key(&args[1]);
-    // A missing key replies an empty array (redis-roaring semantics), not
-    // a zero per offset, and before the offsets are parsed.
+    // A missing key replies an empty array, not a zero per offset, and
+    // before the offsets are parsed.
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
             let offsets = parse_values::<T>(ctx, &args[2..], "offset")?;
@@ -380,7 +380,7 @@ pub fn handle_clearbits<T: RoaringType>(
     match key.get_value::<T>(vtype)? {
         Some(bitmap) => {
             // A trailing literal COUNT switches the reply from OK to the
-            // number of bits actually cleared (redis-roaring semantics).
+            // number of bits actually cleared.
             let mut offset_args = &args[2..];
             let count_mode = offset_args
                 .last()
@@ -545,9 +545,9 @@ pub fn handle_rangeintarray<T: RoaringType>(
     let start = parse_value::<T>(ctx, &args[2], "start")?;
     let end = parse_value::<T>(ctx, &args[3], "end")?;
 
-    // start/end are 0-based POSITIONS in the sorted value array (pagination),
-    // matching redis-roaring: elements at indexes [start, end], truncated at
-    // the cardinality. An inverted range replies empty.
+    // start/end are 0-based POSITIONS in the sorted value array (pagination):
+    // elements at indexes [start, end], truncated at the cardinality. An
+    // inverted range replies empty.
     let (start, end) = (T::value_to_u64(start), T::value_to_u64(end));
     if start > end {
         return Ok(ValkeyValue::Array(vec![]));
@@ -667,7 +667,7 @@ pub fn handle_setrange<T: RoaringType>(
     }
 
     let (bitmap, created) = get_or_create::<T>(&key, vtype)?;
-    // End-exclusive [start, end), matching redis-roaring / CRoaring add_range.
+    // End-exclusive [start, end), like CRoaring's add_range.
     // An already-set range is skipped outright rather than inserted and
     // judged by its count: roaring-rs re-shapes a full bitmap container into
     // a run container even when nothing is added, and a no-op should leave
@@ -1096,7 +1096,7 @@ mod tests {
 
     #[test]
     fn value_reply_string_above_i64_max() {
-        // Matches the C module's ReplyWithUint64: decimal bulk string.
+        // Above i64::MAX the reply is a decimal bulk string.
         assert_eq!(
             value_reply::<RoaringTreemap>(i64::MAX as u64 + 1),
             ValkeyValue::BulkString("9223372036854775808".to_string())

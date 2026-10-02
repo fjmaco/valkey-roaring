@@ -1,7 +1,6 @@
-//! Performance benchmark for valkey-roaring, replicating redis-roaring's
-//! tests/performance.c: same dataset (CRoaring census1881), same operation
-//! groups, same key layout, and the same output table format so results can
-//! be spliced into README.md between BEGIN_PERFORMANCE/END_PERFORMANCE.
+//! Performance benchmark for valkey-roaring: the CRoaring census1881
+//! dataset, measured per operation group, printed as a table that is
+//! spliced into README.md between BEGIN_PERFORMANCE/END_PERFORMANCE.
 //!
 //! Each row measures full client round-trip latency per command against a
 //! live server, using Welford's online algorithm for mean and st.dev.

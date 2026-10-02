@@ -30,8 +30,8 @@ features:
     details: AND, OR, XOR, NOT, ANDOR, DIFF, DIFF1 and ONE run on compressed containers — several times faster than native bitmaps on real datasets.
     link: /guide/performance
   - icon: 🔁
-    title: Drop-in redis-roaring compatibility
-    details: The command surface follows redis-roaring, kept reply-identical by differential testing against the original module — and the same .so loads on both Valkey and Redis, so existing deployments migrate unchanged.
+    title: Valkey and Redis, stable replies
+    details: The same .so loads on both Valkey 8.1+ and Redis 7.4+, and command replies — argument grammar, error wording and reply types — are a stable contract, pinned byte for byte by the test suites.
   - icon: 💾
     title: Persistence and replication
     details: RDB snapshots, AOF with the default preamble configuration, verbatim replication to replicas, DUMP/RESTORE and COPY support.

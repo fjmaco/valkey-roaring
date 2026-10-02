@@ -52,9 +52,6 @@ export default defineConfig({
     socialLinks: [
       { icon: "github", link: "https://github.com/fjmaco/valkey-roaring" },
     ],
-    footer: {
-      message: "Based on redis-roaring by Antonio Viggiano and contributors.",
-    },
     outline: "deep",
   },
 })
