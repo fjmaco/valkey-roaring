@@ -14,7 +14,11 @@ Returns the Jaccard similarity |A∩B| / |A∪B| of two bitmaps.
 
 ## Reply
 
-Bulk string holding the similarity as a float (RESP3: a double). Two empty bitmaps reply 0.
+Bulk string under both RESP2 and RESP3, formatted as redis-roaring formats it:
+
+- `-1` when both bitmaps are empty, `0` when they share nothing, `1` when they are equal;
+- otherwise the exact decimal when the ratio has one within nine fractional digits (`0.5`, `0.125`, `0.000000001`);
+- otherwise C's `%.17g` of the ratio (`0.33333333333333331`, `3.3333333333333335e-05`).
 
 ## Example
 

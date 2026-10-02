@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [import_bytes, parity_ops, bitop_kernels]
+        target: [import_bytes, parity_ops, bitop_kernels, export_canonical]
     steps:
       - uses: actions/checkout@v7
 

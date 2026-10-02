@@ -15,7 +15,7 @@ Returns the value of one bit.
 
 ## Reply
 
-Integer: 0 or 1. A missing key reads as all-zero.
+Integer: 0 or 1. A missing key reads as all-zero — `R.GETBIT` answers 0 for it without validating the offset, `R64.GETBIT` validates first, as their redis-roaring counterparts do.
 
 ## Example
 

@@ -21,7 +21,9 @@ Array of integers; truncated at the cardinality; empty for a missing key or an i
 ## Notes
 
 - `start`/`end` are **positions**, not values — this is the pagination companion to `GETINTARRAY`.
-- The window may span at most 100,000,000 positions; wider windows are rejected with an error.
+- The window may span at most 100,000,000 positions; wider windows are rejected with `Roaring: range too large: maximum 100000000 elements`.
+- One exception, kept from redis-roaring: the full-width request (`0` to 4294967295, or to 18446744073709551615 for R64) lists the whole bitmap, and is refused only when the bitmap holds more than 100,000,000 values.
+- 64-bit positions are full unsigned 64-bit numbers: a window past the cardinality is simply empty.
 
 ## Example
 
