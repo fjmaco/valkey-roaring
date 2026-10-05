@@ -631,7 +631,7 @@ fn r64_import(ctx: &Context, args: Vec<ValkeyString>) -> ValkeyResult {
 valkey_module! {
     name: "valkey-roaring",
     // major*10000 + minor*100 + patch
-    version: 10101,
+    version: 20000,
     allocator: (ValkeyAlloc, ValkeyAlloc),
     data_types: [
         BITMAP32_TYPE,
