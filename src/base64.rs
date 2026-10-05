@@ -25,9 +25,9 @@ const DECODE: [u8; 256] = {
 /// Base64 text of `bytes`.
 pub fn encode(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len().div_ceil(3) * 4);
-    let mut chunks = bytes.chunks_exact(3);
-    for c in &mut chunks {
-        let n = u32::from(c[0]) << 16 | u32::from(c[1]) << 8 | u32::from(c[2]);
+    let (chunks, remainder) = bytes.as_chunks::<3>();
+    for &[a, b, c] in chunks {
+        let n = u32::from(a) << 16 | u32::from(b) << 8 | u32::from(c);
         out.extend_from_slice(&[
             ALPHABET[(n >> 18) as usize & 63],
             ALPHABET[(n >> 12) as usize & 63],
@@ -35,7 +35,7 @@ pub fn encode(bytes: &[u8]) -> Vec<u8> {
             ALPHABET[n as usize & 63],
         ]);
     }
-    match *chunks.remainder() {
+    match *remainder {
         [a] => {
             let n = u32::from(a) << 16;
             out.extend_from_slice(&[
