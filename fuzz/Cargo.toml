@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-roaring = "0.11.5"
+roaring = "0.12.0"
 valkey-roaring = { path = "..", features = ["fuzzing"] }
 # The fuzz binaries run without a live server: this feature makes the module's
 # global allocator fall back to the system allocator (same trick as the tests).
