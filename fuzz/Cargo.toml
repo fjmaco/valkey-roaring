@@ -13,7 +13,7 @@ roaring = "0.11.5"
 valkey-roaring = { path = "..", features = ["fuzzing"] }
 # The fuzz binaries run without a live server: this feature makes the module's
 # global allocator fall back to the system allocator (same trick as the tests).
-valkey-module = { version = "0.1", features = ["enable-system-alloc"] }
+valkey-module = { version = "0.2", features = ["enable-system-alloc"] }
 
 [[bin]]
 name = "import_bytes"
