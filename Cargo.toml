@@ -11,13 +11,13 @@ crate-type = ["cdylib", "rlib"]
 # use-redismodule-api: initialize via RedisModule_Init only. Valkey registers the
 # RedisModule_* API names for compatibility, while Redis lacks the ValkeyModule_*
 # names — without this flag the default init path segfaults under Redis at load.
-valkey-module = { version = "0.1", features = ["use-redismodule-api"] }
+valkey-module = { version = "0.2", features = ["use-redismodule-api"] }
 roaring = "0.11.5"
 
 [dev-dependencies]
 # Test builds only: let ValkeyAlloc fall back to the system allocator so
 # `cargo test` can run without a live Valkey. Production builds are unaffected.
-valkey-module = { version = "0.1", features = ["enable-system-alloc"] }
+valkey-module = { version = "0.2", features = ["enable-system-alloc"] }
 
 [features]
 # Exposes internal algorithm entry points for the fuzz targets in fuzz/.

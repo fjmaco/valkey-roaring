@@ -513,9 +513,9 @@ checksum = "8c1f860d7d29cf02cb2f3f359fd35991af3d30bac52c57d265a3c461074cb4dc"
 
 [[package]]
 name = "valkey-module"
-version = "0.1.14"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e60f03f17a27157fa09e74c6c8020e15ac4dd5e57672ef7e64b118028c8128c"
+checksum = "66d546548a73a13a7c6112dcc75b5785767d29c7128332695a995c97aa853423"
 dependencies = [
  "backtrace",
  "bindgen",
@@ -537,9 +537,9 @@ dependencies = [
 
 [[package]]
 name = "valkey-module-macros-internals"
-version = "0.1.14"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3079c9cffdbffb20c4dc588c7fa033dc30856865db17ce3a6a1dd91e7ceb830"
+checksum = "d926ba165007e2f198927582bc01b04edc7807261f0cefa1d0b9de1ca7b6d383"
 dependencies = [
  "lazy_static",
  "proc-macro2",
